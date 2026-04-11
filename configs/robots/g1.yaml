@@ -1,0 +1,261 @@
+# Unitree G1 EDU Robot Configuration
+# Full specification for ARGOS swarm integration
+
+robot:
+  model: "Unitree G1 EDU"
+  variant: "EDU"
+  manufacturer: "Unitree Robotics"
+  dof: 43
+  weight_kg: 35.0
+  height_m: 1.27
+  payload_kg: 3.0
+
+# ── Physical dimensions ──────────────────────────────────────────────────────
+dimensions:
+  standing_height_m: 1.27
+  shoulder_width_m: 0.45
+  foot_length_m: 0.24
+  reach_max_m: 0.70
+  leg_length_m: 0.72
+
+# ── Compute platform ─────────────────────────────────────────────────────────
+compute:
+  main_cpu:
+    model: "NVIDIA Jetson Orin NX 16GB"
+    cores: 8
+    ram_gb: 16
+    storage_gb: 128
+    os: "Ubuntu 22.04 LTS"
+  motion_controller:
+    model: "Unitree HG motion control board"
+    frequency_hz: 500
+  gpu_tflops: 100  # INT8
+
+# ── Joint definitions ─────────────────────────────────────────────────────────
+# Each joint: axis, range_deg [min, max], max_torque_nm, max_velocity_rad_s
+joints:
+  # Legs — 12 DoF total (6 per side)
+  left_hip_pitch:   { axis: pitch, range_deg: [-50, 120], max_torque_nm: 88,  max_velocity_rad_s: 32 }
+  left_hip_roll:    { axis: roll,  range_deg: [-30,  30], max_torque_nm: 88,  max_velocity_rad_s: 32 }
+  left_hip_yaw:     { axis: yaw,   range_deg: [-30,  30], max_torque_nm: 50,  max_velocity_rad_s: 32 }
+  left_knee:        { axis: pitch, range_deg: [-130,  0], max_torque_nm: 139, max_velocity_rad_s: 20 }
+  left_ankle_pitch: { axis: pitch, range_deg: [-45,  45], max_torque_nm: 50,  max_velocity_rad_s: 32 }
+  left_ankle_roll:  { axis: roll,  range_deg: [-20,  20], max_torque_nm: 50,  max_velocity_rad_s: 32 }
+
+  right_hip_pitch:   { axis: pitch, range_deg: [-120, 50], max_torque_nm: 88,  max_velocity_rad_s: 32 }
+  right_hip_roll:    { axis: roll,  range_deg: [-30,  30], max_torque_nm: 88,  max_velocity_rad_s: 32 }
+  right_hip_yaw:     { axis: yaw,   range_deg: [-30,  30], max_torque_nm: 50,  max_velocity_rad_s: 32 }
+  right_knee:        { axis: pitch, range_deg: [0,  130],  max_torque_nm: 139, max_velocity_rad_s: 20 }
+  right_ankle_pitch: { axis: pitch, range_deg: [-45,  45], max_torque_nm: 50,  max_velocity_rad_s: 32 }
+  right_ankle_roll:  { axis: roll,  range_deg: [-20,  20], max_torque_nm: 50,  max_velocity_rad_s: 32 }
+
+  # Waist — 3 DoF
+  waist_yaw:   { axis: yaw,   range_deg: [-45, 45], max_torque_nm: 88,  max_velocity_rad_s: 10 }
+  waist_roll:  { axis: roll,  range_deg: [-20, 20], max_torque_nm: 50,  max_velocity_rad_s: 10 }
+  waist_pitch: { axis: pitch, range_deg: [-30, 30], max_torque_nm: 50,  max_velocity_rad_s: 10 }
+
+  # Left arm — 7 DoF
+  left_shoulder_pitch: { axis: pitch, range_deg: [-180,  90], max_torque_nm: 25, max_velocity_rad_s: 37 }
+  left_shoulder_roll:  { axis: roll,  range_deg: [-20,  200], max_torque_nm: 25, max_velocity_rad_s: 37 }
+  left_shoulder_yaw:   { axis: yaw,   range_deg: [-90,   90], max_torque_nm: 25, max_velocity_rad_s: 37 }
+  left_elbow:          { axis: pitch, range_deg: [-130,   0], max_torque_nm: 25, max_velocity_rad_s: 37 }
+  left_wrist_roll:     { axis: roll,  range_deg: [-90,   90], max_torque_nm: 5,  max_velocity_rad_s: 37 }
+  left_wrist_pitch:    { axis: pitch, range_deg: [-60,   60], max_torque_nm: 5,  max_velocity_rad_s: 37 }
+  left_wrist_yaw:      { axis: yaw,   range_deg: [-45,   45], max_torque_nm: 5,  max_velocity_rad_s: 37 }
+
+  # Right arm — 7 DoF
+  right_shoulder_pitch: { axis: pitch, range_deg: [-90,  180], max_torque_nm: 25, max_velocity_rad_s: 37 }
+  right_shoulder_roll:  { axis: roll,  range_deg: [-200,  20], max_torque_nm: 25, max_velocity_rad_s: 37 }
+  right_shoulder_yaw:   { axis: yaw,   range_deg: [-90,   90], max_torque_nm: 25, max_velocity_rad_s: 37 }
+  right_elbow:          { axis: pitch, range_deg: [0,   130],  max_torque_nm: 25, max_velocity_rad_s: 37 }
+  right_wrist_roll:     { axis: roll,  range_deg: [-90,   90], max_torque_nm: 5,  max_velocity_rad_s: 37 }
+  right_wrist_pitch:    { axis: pitch, range_deg: [-60,   60], max_torque_nm: 5,  max_velocity_rad_s: 37 }
+  right_wrist_yaw:      { axis: yaw,   range_deg: [-45,   45], max_torque_nm: 5,  max_velocity_rad_s: 37 }
+
+  # Hands — dexterous 5-finger (4 DoF each hand, simplified for control)
+  left_hand_index:  { axis: flex, range_deg: [0, 90], max_torque_nm: 1.5, max_velocity_rad_s: 10 }
+  left_hand_middle: { axis: flex, range_deg: [0, 90], max_torque_nm: 1.5, max_velocity_rad_s: 10 }
+  left_hand_ring:   { axis: flex, range_deg: [0, 90], max_torque_nm: 1.5, max_velocity_rad_s: 10 }
+  left_hand_pinky:  { axis: flex, range_deg: [0, 90], max_torque_nm: 1.5, max_velocity_rad_s: 10 }
+  left_hand_thumb:  { axis: flex, range_deg: [0, 70], max_torque_nm: 1.5, max_velocity_rad_s: 10 }
+
+  right_hand_index:  { axis: flex, range_deg: [0, 90], max_torque_nm: 1.5, max_velocity_rad_s: 10 }
+  right_hand_middle: { axis: flex, range_deg: [0, 90], max_torque_nm: 1.5, max_velocity_rad_s: 10 }
+  right_hand_ring:   { axis: flex, range_deg: [0, 90], max_torque_nm: 1.5, max_velocity_rad_s: 10 }
+  right_hand_pinky:  { axis: flex, range_deg: [0, 90], max_torque_nm: 1.5, max_velocity_rad_s: 10 }
+  right_hand_thumb:  { axis: flex, range_deg: [0, 70], max_torque_nm: 1.5, max_velocity_rad_s: 10 }
+
+  # Head — 2 DoF
+  head_yaw:   { axis: yaw,   range_deg: [-60,  60], max_torque_nm: 3, max_velocity_rad_s: 5 }
+  head_pitch: { axis: pitch, range_deg: [-30,  40], max_torque_nm: 3, max_velocity_rad_s: 5 }
+
+# ── Sensors ───────────────────────────────────────────────────────────────────
+sensors:
+  imu:
+    location: torso
+    type: "9-axis IMU (accel + gyro + mag)"
+    frequency_hz: 500
+    interface: internal
+
+  depth_cameras:
+    - name: front_depth
+      location: head_front
+      model: "Intel RealSense D435i"
+      resolution: [1280, 720]
+      fps: 30
+      fov_h_deg: 87
+      fov_v_deg: 58
+      range_m: [0.2, 10.0]
+      interface: USB3
+    - name: left_wrist_depth
+      location: left_wrist
+      model: "Intel RealSense D405"
+      resolution: [640, 480]
+      fps: 30
+      fov_h_deg: 87
+      range_m: [0.07, 0.5]
+      interface: USB3
+    - name: right_wrist_depth
+      location: right_wrist
+      model: "Intel RealSense D405"
+      resolution: [640, 480]
+      fps: 30
+      fov_h_deg: 87
+      range_m: [0.07, 0.5]
+      interface: USB3
+
+  rgb_cameras:
+    - name: head_rgb
+      location: head_front
+      resolution: [1920, 1080]
+      fps: 60
+      fov_h_deg: 90
+      interface: CSI
+
+  lidar:
+    - name: chest_lidar
+      location: chest_front
+      model: "Livox Mid-360"
+      points_per_second: 200000
+      range_m: 40.0
+      fov_h_deg: 360
+      fov_v_deg: 59
+      interface: Ethernet
+
+  force_torque:
+    - name: left_wrist_ft
+      location: left_wrist
+      axes: 6
+      force_range_n: [-200, 200]
+      torque_range_nm: [-10, 10]
+    - name: right_wrist_ft
+      location: right_wrist
+      axes: 6
+      force_range_n: [-200, 200]
+      torque_range_nm: [-10, 10]
+
+  tactile:
+    - name: left_hand_tactile
+      location: left_hand_palm
+      cells: 64
+      pressure_range_kpa: [0, 100]
+    - name: right_hand_tactile
+      location: right_hand_palm
+      cells: 64
+      pressure_range_kpa: [0, 100]
+
+  foot_pressure:
+    - name: left_foot_pressure
+      location: left_foot_sole
+      cells: 16
+    - name: right_foot_pressure
+      location: right_foot_sole
+      cells: 16
+
+# ── Power ─────────────────────────────────────────────────────────────────────
+power:
+  battery:
+    type: "Li-ion"
+    capacity_wh: 864
+    voltage_v: 48
+    runtime_min_active: 120
+    runtime_min_idle: 240
+  charging:
+    method: ["manual_swap", "auto_dock"]
+    charge_time_min: 90
+    dock_connector: "Unitree proprietary"
+
+# ── Communication ─────────────────────────────────────────────────────────────
+communication:
+  wifi:
+    standard: "Wi-Fi 6 (802.11ax)"
+    frequency_ghz: [2.4, 5.0, 6.0]
+    max_bandwidth_mbps: 2400
+    interface: wlan0
+  ethernet:
+    standard: "1000BASE-T"
+    interface: eth0
+    ip_default: "192.168.123.161"
+  sdk:
+    primary: "unitree_sdk2"
+    transport: "DDS (CycloneDX)"
+    port_state: 8080
+    port_command: 8081
+    topics:
+      - /robot/state
+      - /robot/cmd
+      - /robot/imu
+      - /robot/camera/front/color
+      - /robot/camera/front/depth
+      - /robot/lidar/points
+      - /robot/hand/left/state
+      - /robot/hand/right/state
+  argos_agent:
+    port: 9090
+    protocol: "grpc"
+    heartbeat_interval_s: 1.0
+
+# ── Motion capabilities ───────────────────────────────────────────────────────
+capabilities:
+  locomotion:
+    max_walk_speed_m_s: 2.0
+    max_run_speed_m_s: 3.3
+    max_step_height_m: 0.25
+    max_slope_deg: 30
+    stair_capable: true
+    stair_max_height_m: 0.2
+    obstacle_avoidance: true
+  manipulation:
+    grasp_types: ["pinch", "power", "lateral", "hook", "prismatic"]
+    max_single_hand_payload_kg: 3.0
+    max_bimanual_payload_kg: 5.0
+    tool_capable: true
+    tool_quick_change: false
+  whole_body:
+    squat_capable: true
+    kneel_capable: true
+    crawl_capable: false
+    balance_push_recovery: true
+
+# ── Safety ────────────────────────────────────────────────────────────────────
+safety:
+  emergency_stop:
+    software: true
+    hardware_button: true
+    remote_trigger: true
+  collision_detection:
+    joint_torque_threshold_nm: 5.0
+    contact_force_threshold_n: 20.0
+    action: "immediate_stop_and_retract"
+  human_proximity:
+    safety_bubble_radius_m: 0.5
+    slowdown_radius_m: 1.0
+    stop_radius_m: 0.3
+
+# ── ARGOS integration ─────────────────────────────────────────────────────────
+argos:
+  role_capable: ["sweeper", "vacuumer", "wiper", "mover", "sorter", "coordinator"]
+  default_role: "sweeper"
+  swarm_protocol_version: "1.0"
+  policy_model_path: "data/models/g1_cleaning_policy.pt"
+  perception_model_path: "data/models/g1_perception.pt"

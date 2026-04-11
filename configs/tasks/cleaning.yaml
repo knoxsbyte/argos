@@ -1,0 +1,443 @@
+# ARGOS Cleaning Task Library
+# Defines all supported cleaning tasks for humanoid robot swarms
+
+version: "1.0"
+task_library:
+
+  # ── Floor tasks ──────────────────────────────────────────────────────────────
+
+  sweep_floor:
+    display_name: "Sweep Floor"
+    description: "Dry-sweep a floor area using a broom or brush tool"
+    type: solo
+    category: floor_cleaning
+    policy: "sweep_v1"
+    policy_checkpoint: "data/models/policies/sweep_floor.pt"
+    min_robots: 1
+    max_robots: 4
+    duration_estimate:
+      base_seconds: 60
+      per_sqm_seconds: 8
+    required_tools:
+      - name: broom
+        grasp: power
+        mount: right_hand
+        alternatives: [brush, dustpan_broom]
+    aux_tools:
+      - name: dustpan
+        grasp: power
+        mount: left_hand
+    environment_requirements:
+      floor_types: [hardwood, tile, concrete, laminate]
+      obstacle_clearance_m: 0.4
+    success_criteria:
+      - metric: debris_removed_fraction
+        threshold: 0.95
+      - metric: coverage_fraction
+        threshold: 0.98
+    failure_conditions:
+      - condition: tool_dropped
+        action: recover_and_retry
+      - condition: obstacle_blocking
+        action: request_human_assist
+    cooperative_mode:
+      enabled: true
+      strategy: "zone_partition"
+      handoff_protocol: "border_sweep"
+
+  vacuum_floor:
+    display_name: "Vacuum Floor"
+    description: "Vacuum a floor area with a handheld or upright vacuum"
+    type: solo
+    category: floor_cleaning
+    policy: "vacuum_v1"
+    policy_checkpoint: "data/models/policies/vacuum_floor.pt"
+    min_robots: 1
+    max_robots: 3
+    duration_estimate:
+      base_seconds: 90
+      per_sqm_seconds: 12
+    required_tools:
+      - name: handheld_vacuum
+        grasp: power
+        mount: right_hand
+        alternatives: [upright_vacuum]
+    environment_requirements:
+      floor_types: [carpet, hardwood, tile, laminate]
+      obstacle_clearance_m: 0.5
+      power_outlet_required: true
+    success_criteria:
+      - metric: particulate_density_reduction
+        threshold: 0.90
+      - metric: coverage_fraction
+        threshold: 0.97
+    failure_conditions:
+      - condition: vacuum_bag_full
+        action: notify_human
+      - condition: cable_tangle
+        action: pause_and_untangle
+    cooperative_mode:
+      enabled: true
+      strategy: "serpentine_zone_split"
+      handoff_protocol: "overlap_10cm"
+
+  mop_floor:
+    display_name: "Mop Floor"
+    description: "Wet-mop a hard floor surface"
+    type: cooperative
+    category: floor_cleaning
+    policy: "mop_v1"
+    policy_checkpoint: "data/models/policies/mop_floor.pt"
+    min_robots: 1
+    max_robots: 2
+    duration_estimate:
+      base_seconds: 120
+      per_sqm_seconds: 20
+    required_tools:
+      - name: mop
+        grasp: power
+        mount: bimanual
+        alternatives: [spray_mop]
+    aux_tools:
+      - name: mop_bucket
+        grasp: hook
+        mount: right_hand
+    environment_requirements:
+      floor_types: [tile, hardwood, vinyl, concrete]
+      obstacle_clearance_m: 0.6
+      water_source_required: true
+    success_criteria:
+      - metric: surface_cleanliness_score
+        threshold: 0.92
+      - metric: coverage_fraction
+        threshold: 0.95
+    failure_conditions:
+      - condition: mop_dry
+        action: return_to_bucket
+      - condition: spill_detected
+        action: increase_dwell_time
+    notes: "Robot B pre-wets floor; Robot A mops in coordinated pattern when 2 robots assigned."
+
+  # ── Surface wiping tasks ─────────────────────────────────────────────────────
+
+  wipe_surface:
+    display_name: "Wipe Surface"
+    description: "Wipe horizontal or vertical surfaces (tables, counters, shelves) with a cloth"
+    type: solo
+    category: surface_cleaning
+    policy: "wipe_surface_v1"
+    policy_checkpoint: "data/models/policies/wipe_surface.pt"
+    min_robots: 1
+    max_robots: 2
+    duration_estimate:
+      base_seconds: 30
+      per_sqm_seconds: 25
+    required_tools:
+      - name: microfiber_cloth
+        grasp: pinch
+        mount: right_hand
+        alternatives: [sponge, paper_towel]
+    aux_tools:
+      - name: spray_bottle
+        grasp: pinch
+        mount: left_hand
+    environment_requirements:
+      surface_types: [wood, plastic, metal, glass, stone]
+      reachable_height_range_m: [0.4, 1.5]
+    success_criteria:
+      - metric: surface_reflectance_delta
+        threshold: 0.85
+      - metric: smear_free_fraction
+        threshold: 0.90
+    failure_conditions:
+      - condition: cloth_saturated
+        action: replace_cloth
+      - condition: out_of_reach
+        action: adjust_pose_and_retry
+
+  wipe_window:
+    display_name: "Wipe Window"
+    description: "Clean glass windows and mirrors using squeegee or cloth"
+    type: cooperative
+    category: surface_cleaning
+    policy: "wipe_window_v1"
+    policy_checkpoint: "data/models/policies/wipe_window.pt"
+    min_robots: 1
+    max_robots: 2
+    duration_estimate:
+      base_seconds: 45
+      per_sqm_seconds: 40
+    required_tools:
+      - name: squeegee
+        grasp: power
+        mount: right_hand
+        alternatives: [microfiber_cloth]
+    aux_tools:
+      - name: spray_bottle
+        grasp: pinch
+        mount: left_hand
+    environment_requirements:
+      surface_types: [glass, mirror]
+      reachable_height_range_m: [0.5, 2.0]
+    success_criteria:
+      - metric: streak_free_fraction
+        threshold: 0.92
+      - metric: coverage_fraction
+        threshold: 0.98
+    failure_conditions:
+      - condition: window_height_exceeded
+        action: notify_human_for_ladder
+      - condition: squeegee_pressure_too_high
+        action: reduce_force_and_retry
+    notes: "Two robots can work cooperatively, one at lower pane and one at upper pane."
+
+  # ── Object manipulation tasks ─────────────────────────────────────────────────
+
+  pick_up_object:
+    display_name: "Pick Up Object"
+    description: "Identify, grasp, and relocate a single object from floor or surface"
+    type: solo
+    category: object_manipulation
+    policy: "pick_place_v2"
+    policy_checkpoint: "data/models/policies/pick_up_object.pt"
+    min_robots: 1
+    max_robots: 1
+    duration_estimate:
+      base_seconds: 15
+      per_object_seconds: 8
+    required_tools: []
+    environment_requirements:
+      object_weight_max_kg: 3.0
+      object_size_max_m: [0.4, 0.4, 0.5]
+      clear_path_required: true
+    success_criteria:
+      - metric: object_relocated
+        threshold: 1.0
+      - metric: object_undamaged
+        threshold: 1.0
+    failure_conditions:
+      - condition: grasp_failure
+        retries: 3
+        action: try_alternative_grasp
+      - condition: object_too_heavy
+        action: escalate_to_cooperative
+    grasp_strategy:
+      detection: "yolov8_instance_segmentation"
+      pose_estimation: "foundpose"
+      grasp_planning: "anygrasp"
+
+  sort_items:
+    display_name: "Sort Items"
+    description: "Categorize and sort scattered items into designated bins or areas"
+    type: cooperative
+    category: object_manipulation
+    policy: "sort_items_v1"
+    policy_checkpoint: "data/models/policies/sort_items.pt"
+    min_robots: 1
+    max_robots: 3
+    duration_estimate:
+      base_seconds: 30
+      per_item_seconds: 12
+    required_tools: []
+    environment_requirements:
+      bins_predefined: true
+      object_weight_max_kg: 2.0
+    success_criteria:
+      - metric: items_correctly_sorted_fraction
+        threshold: 0.95
+      - metric: completion_rate
+        threshold: 0.98
+    failure_conditions:
+      - condition: unknown_category
+        action: place_in_unsorted_bin_and_flag
+      - condition: bin_full
+        action: pause_and_notify_human
+    classification_model: "clip_sorting_v1"
+    cooperative_mode:
+      enabled: true
+      strategy: "item_assignment_auction"
+      communication: "swarm_bus"
+
+  # ── Bed and linen tasks ───────────────────────────────────────────────────────
+
+  make_bed:
+    display_name: "Make Bed"
+    description: "Straighten and smooth existing bed sheets, blankets, and pillows"
+    type: cooperative
+    category: linen
+    policy: "make_bed_v1"
+    policy_checkpoint: "data/models/policies/make_bed.pt"
+    min_robots: 2
+    max_robots: 2
+    duration_estimate:
+      base_seconds: 240
+    required_tools: []
+    environment_requirements:
+      bed_clearance_m: 0.7
+      bed_types: [twin, full, queen, king]
+    success_criteria:
+      - metric: wrinkle_score
+        threshold: 0.85
+      - metric: pillow_placement_correct
+        threshold: 1.0
+    failure_conditions:
+      - condition: sheet_tangled
+        action: unfold_and_retry
+      - condition: single_robot_failed
+        action: pause_wait_for_second_robot
+    notes: "Requires exactly 2 robots for bimanual coordination across the bed width."
+
+  change_sheets:
+    display_name: "Change Sheets"
+    description: "Remove soiled bed linen and fit fresh sheets, pillowcases, and duvet cover"
+    type: cooperative
+    category: linen
+    policy: "change_sheets_v1"
+    policy_checkpoint: "data/models/policies/change_sheets.pt"
+    min_robots: 2
+    max_robots: 2
+    duration_estimate:
+      base_seconds: 600
+    required_tools:
+      - name: fresh_linen_bundle
+        grasp: power
+        mount: bimanual
+    environment_requirements:
+      linen_storage_accessible: true
+      bed_clearance_m: 0.7
+    success_criteria:
+      - metric: sheet_fitted_correctly
+        threshold: 1.0
+      - metric: wrinkle_score
+        threshold: 0.80
+    failure_conditions:
+      - condition: wrong_sheet_size
+        action: notify_human_and_pause
+      - condition: corner_fitting_failure
+        retries: 5
+        action: escalate_to_human
+
+  # ── Furniture and heavy object tasks ─────────────────────────────────────────
+
+  move_furniture:
+    display_name: "Move Furniture"
+    description: "Reposition furniture to a specified target location"
+    type: cooperative
+    category: heavy_manipulation
+    policy: "move_furniture_v1"
+    policy_checkpoint: "data/models/policies/move_furniture.pt"
+    min_robots: 2
+    max_robots: 4
+    duration_estimate:
+      base_seconds: 120
+      per_meter_seconds: 30
+    required_tools: []
+    environment_requirements:
+      object_weight_max_kg: 40.0  # per robot: 10 kg, 4 robots: 40 kg combined
+      clear_path_required: true
+      path_width_min_m: 1.2
+    success_criteria:
+      - metric: target_position_error_m
+        threshold: 0.05
+      - metric: target_orientation_error_deg
+        threshold: 5.0
+    failure_conditions:
+      - condition: weight_exceeded
+        action: notify_human
+      - condition: path_blocked
+        action: reroute_or_notify
+    safety:
+      max_speed_m_s: 0.3
+      human_clearance_required_m: 1.5
+      coordinate_via: "swarm_consensus"
+
+  take_out_trash:
+    display_name: "Take Out Trash"
+    description: "Collect trash bags from bins and transport to designated disposal point"
+    type: solo
+    category: waste_management
+    policy: "trash_collection_v1"
+    policy_checkpoint: "data/models/policies/take_out_trash.pt"
+    min_robots: 1
+    max_robots: 2
+    duration_estimate:
+      base_seconds: 90
+      per_bin_seconds: 45
+    required_tools:
+      - name: trash_bag
+        grasp: hook
+        mount: right_hand
+    environment_requirements:
+      bin_locations_mapped: true
+      disposal_point_accessible: true
+      bag_weight_max_kg: 5.0
+    success_criteria:
+      - metric: bins_emptied_fraction
+        threshold: 1.0
+      - metric: bag_leak_free
+        threshold: 1.0
+    failure_conditions:
+      - condition: bag_too_heavy
+        action: split_bag_contents
+      - condition: disposal_chute_blocked
+        action: notify_human
+
+  organize_shelf:
+    display_name: "Organize Shelf"
+    description: "Sort and arrange items on shelves according to a defined schema"
+    type: solo
+    category: object_manipulation
+    policy: "organize_shelf_v1"
+    policy_checkpoint: "data/models/policies/organize_shelf.pt"
+    min_robots: 1
+    max_robots: 2
+    duration_estimate:
+      base_seconds: 60
+      per_item_seconds: 20
+    required_tools: []
+    environment_requirements:
+      shelf_height_range_m: [0.3, 1.8]
+      schema_provided: true
+    success_criteria:
+      - metric: items_correctly_placed_fraction
+        threshold: 0.97
+      - metric: alignment_score
+        threshold: 0.85
+    failure_conditions:
+      - condition: schema_ambiguous
+        action: request_clarification
+      - condition: item_too_heavy_for_shelf
+        action: skip_and_flag
+    classification_model: "clip_sorting_v1"
+    organization_schemas:
+      - type: alphabetical
+      - type: size_ascending
+      - type: size_descending
+      - type: category_grouped
+      - type: custom
+
+# ── Global task defaults ──────────────────────────────────────────────────────
+defaults:
+  retry_limit: 3
+  timeout_multiplier: 2.0
+  human_escalation_enabled: true
+  progress_report_interval_s: 10
+  perception_backend: "argos_perception_v1"
+  coordination_protocol: "argos_swarm_v1"
+
+# ── Tool registry ─────────────────────────────────────────────────────────────
+tools:
+  broom:            { category: floor, power_required: false, weight_kg: 0.5 }
+  dustpan_broom:    { category: floor, power_required: false, weight_kg: 0.4 }
+  dustpan:          { category: floor, power_required: false, weight_kg: 0.2 }
+  handheld_vacuum:  { category: floor, power_required: true,  weight_kg: 1.2 }
+  upright_vacuum:   { category: floor, power_required: true,  weight_kg: 4.5 }
+  mop:              { category: floor, power_required: false, weight_kg: 0.8 }
+  spray_mop:        { category: floor, power_required: false, weight_kg: 1.0 }
+  mop_bucket:       { category: floor, power_required: false, weight_kg: 2.0 }
+  microfiber_cloth: { category: surface, power_required: false, weight_kg: 0.05 }
+  sponge:           { category: surface, power_required: false, weight_kg: 0.1 }
+  squeegee:         { category: surface, power_required: false, weight_kg: 0.3 }
+  spray_bottle:     { category: surface, power_required: false, weight_kg: 0.5 }
+  fresh_linen_bundle: { category: linen, power_required: false, weight_kg: 2.0 }
+  trash_bag:        { category: waste, power_required: false, weight_kg: 0.1 }

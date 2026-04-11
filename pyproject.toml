@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "argos"
+version = "0.1.0"
+description = "Autonomous Robot Group Operations System — humanoid robot swarm cleaning framework"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+[project.scripts]
+argos = "argos.main:app"
+
+[project.dependencies]
+typer = ">=0.12"
+textual = ">=0.80"
+rich = ">=13.0"
+torch = ">=2.3"
+transformers = ">=4.44"
+peft = ">=0.11"
+diffusers = ">=0.30"
+accelerate = ">=0.33"
+opencv-python = ">=4.10"
+mediapipe = ">=0.10"
+open3d = ">=0.18"
+ultralytics = ">=8.2"
+anthropic = ">=0.30"
+networkx = ">=3.3"
+mujoco = ">=3.1"
+gymnasium = ">=1.0"
+numpy = ">=1.26"
+pydantic = ">=2.7"
+pyyaml = ">=6.0"
+aiofiles = ">=23.0"
+asyncssh = ">=2.14"
+h5py = ">=3.11"
+einops = ">=0.8"
+timm = ">=1.0"
+
+[project.optional-dependencies]
+ros2 = ["rclpy"]
+isaaclab = ["isaacsim"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-mock>=3.14", "black>=24.0", "ruff>=0.4"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
