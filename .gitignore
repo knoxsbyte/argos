@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Data & models (large files — track with Git LFS if needed)
+data/raw/*.mp4
+data/raw/*.avi
+data/raw/*.mov
+data/processed/*.h5
+data/models/*.ckpt
+data/models/*.pt
+data/models/*.safetensors
+
+# Secrets / credentials
+.env
+.env.*
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+*.coverage
+
+# MuJoCo
+*.mjb
+
+# Logs
+*.log
+logs/
+
+# OMC session state
+.omc/state/
+.omc/sessions/
