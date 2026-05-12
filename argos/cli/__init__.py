@@ -1,11 +1,5 @@
-"""ARGOS CLI package — exports ArgosApp (Textual) and app (Typer)."""
+"""ARGOS CLI package."""
 
-from argos.cli.app import ArgosApp
+from argos.cli.app import ArgosREPL
 
-
-def _get_typer_app():
-    from argos.main import app
-    return app
-
-
-__all__ = ["ArgosApp"]
+__all__ = ["ArgosREPL"]

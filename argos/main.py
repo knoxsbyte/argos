@@ -135,12 +135,9 @@ def disconnect(
 
 @app.command()
 def fleet() -> None:
-    """Launch the ARGOS fleet management TUI dashboard."""
-    print_banner()
-    console.print("  [#C0C0C0]Launching TUI…[/#C0C0C0]\n")
-
-    from argos.cli.app import ArgosApp
-    ArgosApp().run()
+    """Launch the ARGOS interactive REPL."""
+    from argos.cli.app import ArgosREPL
+    ArgosREPL().run()
 
 
 # ---------------------------------------------------------------------------
