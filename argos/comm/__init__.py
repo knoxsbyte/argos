@@ -17,6 +17,7 @@ from argos.comm.messages import (
 )
 from argos.comm.robot_registry import RobotRegistry
 from argos.comm.unitree_bridge import G1Config, MockUnitreeBridge, UnitreeBridge
+from argos.comm.battery import BatteryMonitor, BatteryStatus, ChargeState, ChargingDock
 
 __all__ = [
     # Bridges
@@ -35,4 +36,9 @@ __all__ = [
     "CoopMessage",
     "CoopPhase",
     "HeartbeatMessage",
+    # Battery
+    "BatteryMonitor",
+    "BatteryStatus",
+    "ChargeState",
+    "ChargingDock",
 ]
