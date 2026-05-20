@@ -140,6 +140,77 @@ def fleet() -> None:
     ArgosREPL().run()
 
 
+@app.command()
+def demo() -> None:
+    """Launch ARGOS in demo mode — two simulated robots pre-connected."""
+    from argos.cli.app import DemoArgosREPL
+    DemoArgosREPL().run()
+
+
+@app.command()
+def battery(
+    robot: Optional[str] = typer.Option(None, "--robot", "-r", help="Filter to one robot"),
+) -> None:
+    """Show battery status and charging dock assignments for all connected robots."""
+    from argos.comm.battery import BatteryMonitor, ChargingDock
+
+    monitor = BatteryMonitor()
+
+    # Demo data — in production this comes from the live registry
+    demo_robots = [
+        {"name": "G1-Alpha", "battery": 87.0, "state": "nominal", "dock": "—"},
+        {"name": "G1-Beta",  "battery": 34.0, "state": "low",     "dock": "—"},
+    ]
+    if robot:
+        demo_robots = [r for r in demo_robots if r["name"] == robot]
+
+    table = Table(
+        border_style="#C0C0C0",
+        header_style="bold #00FFFF",
+        show_lines=False,
+    )
+    table.add_column("Robot",         style="bold #00FFFF", no_wrap=True)
+    table.add_column("Battery",       no_wrap=True)
+    table.add_column("State",         no_wrap=True)
+    table.add_column("Est. remaining",style="#C0C0C0")
+    table.add_column("Dock",          style="#808080")
+
+    state_labels = {
+        "nominal":  "[bold #00FF88]● NOMINAL[/]",
+        "low":      "[bold #FFD700]▲ LOW[/]",
+        "critical": "[bold #FF4444]✖ CRITICAL[/]",
+        "charging": "[bold #00FFFF]⚡ CHARGING[/]",
+        "full":     "[bold #00FF88]✓ FULL[/]",
+    }
+
+    for r in demo_robots:
+        pct = r["battery"]
+        filled = int(pct / 10)
+        color = "#00FF88" if pct > 40 else ("#FFD700" if pct > 15 else "#FF4444")
+        bar = f"[{color}]{'█' * filled}{'░' * (10 - filled)}[/] {pct:.0f}%"
+        mins = pct / 0.8
+        table.add_row(
+            r["name"], bar,
+            state_labels.get(r["state"], r["state"]),
+            f"{mins:.0f} min",
+            r.get("dock", "—"),
+        )
+
+    console.print()
+    console.print(Panel(table, title="[bold #00FFFF]Battery Status[/]",
+                        border_style="#C0C0C0"))
+
+    docks = monitor.dock_summary()
+    dock_lines = "\n".join(
+        f"  [#00FFFF]{d['dock_id']}[/]  pos={d['position']}  "
+        f"{'[#00FF88]free[/]' if d['available'] else '[#FFD700]occupied[/]'}"
+        for d in docks
+    )
+    console.print(Panel(dock_lines, title="[bold #00FFFF]Charging Docks[/]",
+                        border_style="#C0C0C0"))
+    console.print()
+
+
 # ---------------------------------------------------------------------------
 # Task sub-commands
 # ---------------------------------------------------------------------------

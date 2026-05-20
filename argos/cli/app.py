@@ -146,6 +146,7 @@ class ArgosREPL:
             "task":       self._cmd_task,
             "connect":    self._cmd_connect,
             "disconnect": self._cmd_disconnect,
+            "battery":    self._cmd_battery,
             "train":      self._cmd_train,
             "sim":        self._cmd_sim,
             "clear":      self._cmd_clear,
@@ -262,6 +263,51 @@ class ArgosREPL:
         else:
             console.print(f"  [{RED}]Robot not found:[/] {name}\n")
 
+    def _cmd_battery(self, args: list[str] = []) -> None:
+        from argos.comm.battery import ChargeState
+        console.print()
+        if not self._robots:
+            console.print(f"  [{YELLOW}]No robots connected.[/]\n")
+            return
+
+        t = Table(show_header=True, header_style=f"bold {CYAN}",
+                  border_style=SILVER, box=_box(), expand=False, min_width=62)
+        t.add_column("Robot", style=f"bold {CYAN}", no_wrap=True)
+        t.add_column("Battery", no_wrap=True)
+        t.add_column("State", no_wrap=True)
+        t.add_column("Est. remaining", style=DIM)
+        t.add_column("Dock", style=DIM)
+
+        state_style = {
+            "nominal":  f"[{GREEN}]● NOMINAL[/]",
+            "low":      f"[{YELLOW}]▲ LOW[/]",
+            "critical": f"[{RED}]✖ CRITICAL[/]",
+            "charging": f"[{CYAN}]⚡ CHARGING[/]",
+            "full":     f"[{GREEN}]✓ FULL[/]",
+        }
+
+        for r in self._robots:
+            bat = r.get("battery", 100.0)
+            if bat >= 98:
+                state = "full"
+            elif bat < 15:
+                state = "critical"
+            elif bat < 40:
+                state = "low"
+            else:
+                state = "nominal"
+
+            mins = bat / 0.8 if state not in ("charging", "full") else float("inf")
+            mins_str = f"{mins:.0f} min" if mins != float("inf") else "—"
+            dock = r.get("dock", "—")
+
+            t.add_row(r["name"], _battery_bar(bat),
+                      state_style.get(state, state), mins_str, dock)
+
+        console.print(Panel(t, title=f"[bold {CYAN}]Battery Status[/]",
+                            border_style=SILVER))
+        console.print()
+
     def _cmd_train(self, args: list[str] = []) -> None:
         console.print(Panel(
             f"  [{SILVER}]Run these from your shell:[/]\n\n"
@@ -317,3 +363,127 @@ class ArgosREPL:
             tasks.append({"name": "sweep_floor", "type": "solo"})
             tasks.append({"name": "wipe_surface", "type": "solo"})
         return tasks
+
+
+# ── Demo REPL ─────────────────────────────────────────────────────────────────
+
+import threading
+import random
+
+
+class DemoArgosREPL(ArgosREPL):
+    """
+    Identical to ArgosREPL but pre-loaded with two simulated G1 robots
+    and a set of realistic tasks. A background thread slowly drains battery,
+    advances task progress, and emits log events so the demo feels live.
+    """
+
+    _LOG_EVENTS = [
+        ("G1-Alpha", "Waypoint 12/24 reached in zone A"),
+        ("G1-Beta",  "Cooperative sync signal sent to G1-Alpha"),
+        ("G1-Alpha", "Surface wipe cycle 3/5 complete"),
+        ("G1-Beta",  "Battery check — 68% remaining"),
+        ("Swarm",    "Auction re-run: vacuum_rug allocated to G1-Alpha"),
+        ("G1-Alpha", "Obstacle detected — rerouting"),
+        ("G1-Beta",  "Sheet grip confirmed — executing pull"),
+        ("G1-Alpha", "Zone A coverage: 78%"),
+        ("Swarm",    "PEFA phase: EXECUTE — both robots synchronized"),
+        ("G1-Beta",  "Pillow placement complete"),
+        ("G1-Alpha", "sweep_floor zone A → DONE"),
+        ("Swarm",    "Task t002 progressing — ETA 42s"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+
+        # Pre-populate two connected robots
+        self._robots = [
+            {"name": "G1-Alpha", "ip": "192.168.1.10", "status": "CLEANING",
+             "battery": 87.0, "task": "wipe_surface", "zone": "A"},
+            {"name": "G1-Beta",  "ip": "192.168.1.11", "status": "CLEANING",
+             "battery": 72.0, "task": "make_bed",     "zone": "B"},
+        ]
+
+        # Pre-populate a realistic task history
+        self._tasks = [
+            {"id": "t001", "name": "sweep_floor",  "type": "solo",
+             "robots": "G1-Alpha", "status": "DONE"},
+            {"id": "t002", "name": "wipe_surface", "type": "solo",
+             "robots": "G1-Alpha", "status": "ACTIVE"},
+            {"id": "t003", "name": "make_bed",     "type": "cooperative",
+             "robots": "G1-Alpha + G1-Beta", "status": "ACTIVE"},
+            {"id": "t004", "name": "vacuum_rug",   "type": "solo",
+             "robots": "G1-Alpha", "status": "PENDING"},
+        ]
+        self._task_counter = 4
+        self._log: list[str] = []
+        self._log_idx = 0
+        self._stop_sim = threading.Event()
+
+    def run(self) -> None:
+        # Start background simulation thread
+        sim = threading.Thread(target=self._simulate, daemon=True)
+        sim.start()
+        try:
+            super().run()
+        finally:
+            self._stop_sim.set()
+
+    # ── background simulation ─────────────────────────────────────────────────
+
+    def _simulate(self) -> None:
+        tick = 0
+        while not self._stop_sim.is_set():
+            time.sleep(4)
+            tick += 1
+
+            # Drain battery slowly
+            for r in self._robots:
+                if r["status"] == "CLEANING":
+                    r["battery"] = max(0.0, r["battery"] - random.uniform(0.3, 0.8))
+                    if r["battery"] < 15:
+                        r["status"] = "IDLE"
+                        r["task"] = "—"
+
+            # Advance wipe_surface → DONE after ~20s, then start vacuum_rug
+            if tick == 5:
+                for t in self._tasks:
+                    if t["id"] == "t002":
+                        t["status"] = "DONE"
+                for r in self._robots:
+                    if r["name"] == "G1-Alpha":
+                        r["task"] = "vacuum_rug"
+                for t in self._tasks:
+                    if t["id"] == "t004":
+                        t["status"] = "ACTIVE"
+
+            # Advance make_bed → DONE after ~36s
+            if tick == 9:
+                for t in self._tasks:
+                    if t["id"] == "t003":
+                        t["status"] = "DONE"
+                for r in self._robots:
+                    if r["name"] == "G1-Beta":
+                        r["task"] = "—"
+                        r["status"] = "IDLE"
+
+            # Cycle log events (shown on next `status` call)
+            event_robot, event_msg = self._LOG_EVENTS[self._log_idx % len(self._LOG_EVENTS)]
+            self._log.append(f"[{event_robot}] {event_msg}")
+            if len(self._log) > 20:
+                self._log.pop(0)
+            self._log_idx += 1
+
+    # ── override status to also show live log ─────────────────────────────────
+
+    def _cmd_status(self, args: list[str] = []) -> None:
+        super()._cmd_status(args)
+        if self._log:
+            from rich.text import Text
+            log_text = "\n".join(
+                f"  [{DIM}]·[/] [{SILVER}]{line}[/]"
+                for line in self._log[-6:]
+            )
+            console.print(Panel(log_text, title=f"[bold {CYAN}]Live Log[/]",
+                                border_style=SILVER))
+            console.print()

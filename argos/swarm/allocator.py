@@ -21,9 +21,13 @@ logger = logging.getLogger(__name__)
 AnyBridge = Union[UnitreeBridge, MockUnitreeBridge]
 
 # Penalty weights for the bid cost function.
-_BATTERY_LOW_THRESHOLD: float = 20.0   # percent below which penalty kicks in
-_BATTERY_PENALTY_SCALE: float = 50.0   # added to cost per task when battery low
-_LOAD_PENALTY_PER_TASK: float = 10.0   # cost penalty per already-assigned task
+# Thresholds mirror BatteryMonitor.LOW_THRESHOLD / CRITICAL_THRESHOLD so that
+# auction costs naturally prefer robots with healthy batteries.
+_BATTERY_LOW_THRESHOLD: float = 40.0      # matches BatteryMonitor.LOW_THRESHOLD
+_BATTERY_CRITICAL_THRESHOLD: float = 15.0 # matches BatteryMonitor.CRITICAL_THRESHOLD
+_BATTERY_PENALTY_SCALE: float = 50.0      # cost added per % below low threshold
+_BATTERY_CRITICAL_PENALTY: float = 1000.0 # near-infinite cost — don't assign to critical robots
+_LOAD_PENALTY_PER_TASK: float = 10.0      # cost penalty per already-assigned task
 _TASK_LOCATION_DEFAULT: list[float] = [0.0, 0.0, 0.0]  # fallback task location
 
 
@@ -271,6 +275,10 @@ class AuctionAllocator:
 
         # Battery penalty — penalise robots that might not complete the task.
         battery = robot_state.battery_percent
+
+        # Critical robots should never be assigned new tasks.
+        if battery < _BATTERY_CRITICAL_THRESHOLD:
+            return _BATTERY_CRITICAL_PENALTY
         battery_penalty = (
             _BATTERY_PENALTY_SCALE * (_BATTERY_LOW_THRESHOLD - battery) / _BATTERY_LOW_THRESHOLD
             if battery < _BATTERY_LOW_THRESHOLD
