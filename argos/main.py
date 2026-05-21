@@ -309,6 +309,103 @@ def task_cancel(
     console.print(f"  [bold #00FF88]✔[/bold #00FF88]  Task {task_id} cancelled")
 
 
+@task_app.command("build")
+def task_build() -> None:
+    """Launch the interactive task wizard — guided step-by-step task creation."""
+    from argos.tasks.library import TaskLibrary
+    lib   = TaskLibrary.get_instance()
+    types = sorted(lib.list_types())
+
+    console.print()
+    console.print("[bold #00FFFF]Task Builder[/]  [#808080]— step-by-step wizard (blank = cancel)[/#808080]\n")
+
+    # Step 1: pick task type
+    for i, name in enumerate(types, 1):
+        cfg  = lib.get_config(name)
+        kind = "[#FFD700]cooperative[/#FFD700]" if lib.is_cooperative(name) else "solo"
+        console.print(f"  [#00FFFF]{i:>2}.[/#00FFFF] [bold #C0C0C0]{name}[/]  "
+                      f"[#808080]{kind}  policy={cfg.get('policy','—')}[/#808080]")
+    console.print()
+
+    raw = console.input("  [#00FFFF]Select task type[/#00FFFF] [#808080](number or name)[/#808080] [#C0C0C0]›[/#C0C0C0] ").strip()
+    if not raw:
+        console.print("  [#808080]Cancelled.[/#808080]\n"); return
+
+    if raw.isdigit() and 1 <= int(raw) <= len(types):
+        task_type = types[int(raw) - 1]
+    elif raw in types:
+        task_type = raw
+    else:
+        console.print(f"  [bold #FF4444]Invalid selection.[/]\n"); return
+
+    cfg    = lib.get_config(task_type)
+    min_r  = lib.min_robots(task_type)
+    is_coop = lib.is_cooperative(task_type)
+    console.print(f"\n  [bold #00FF88]✓[/] [#C0C0C0]{task_type}[/#C0C0C0]  "
+                  f"[#808080]policy={cfg.get('policy','—')}  min_robots={min_r}[/#808080]\n")
+
+    # Step 2: robot assignment
+    raw_robots = console.input(
+        f"  [#00FFFF]Robot name(s)[/#00FFFF] [#808080](comma-separated, need {min_r}+)[/#808080] "
+        f"[#C0C0C0]›[/#C0C0C0] "
+    ).strip()
+    if not raw_robots:
+        console.print("  [#808080]Cancelled.[/#808080]\n"); return
+    assigned = [r.strip() for r in raw_robots.split(",") if r.strip()]
+
+    if len(assigned) < min_r:
+        console.print(f"  [bold #FFD700]Warning:[/] {task_type} needs {min_r} robot(s), got {len(assigned)}.")
+
+    # Step 3: params
+    PARAM_PROMPTS = {
+        "sweep_floor":    [("zone",         "Zone label (e.g. A, B)")],
+        "vacuum_floor":   [("zone",         "Zone label")],
+        "mop_floor":      [("zone",         "Zone label")],
+        "wipe_surface":   [("target",       "Surface (e.g. counter, table)")],
+        "wipe_window":    [("target",       "Window label (e.g. north)")],
+        "pick_up_object": [("object",       "Object to pick up")],
+        "sort_items":     [("source",       "Source location"),
+                           ("destination",  "Destination")],
+        "take_out_trash": [("bin_location", "Bin location")],
+        "make_bed":       [("bed_pos",      "Bed centre x,y (e.g. 2.0,1.5)")],
+        "change_sheets":  [("bed_pos",      "Bed centre x,y")],
+        "move_furniture": [("furniture",    "Furniture name"),
+                           ("destination",  "Destination x,y")],
+        "organize_shelf": [("shelf",        "Shelf label or location")],
+    }
+    params: dict = {}
+    prompts = PARAM_PROMPTS.get(task_type, [])
+    if prompts:
+        console.print()
+        for key, label in prompts:
+            val = console.input(f"  [#00FFFF]{label}[/#00FFFF] [#808080](optional)[/#808080] "
+                                f"[#C0C0C0]›[/#C0C0C0] ").strip()
+            if val:
+                params[key] = [float(x) for x in val.split(",")] \
+                              if key == "bed_pos" and "," in val else val
+
+    # Step 4: confirm
+    import uuid
+    tid        = f"T-{str(uuid.uuid4())[:6].upper()}"
+    robots_str = ", ".join(assigned)
+    param_str  = "  ".join(f"{k}={v}" for k, v in params.items()) or "(none)"
+
+    console.print(Panel(
+        f"[bold #C0C0C0]{task_type}[/]\n\n"
+        f"  [#808080]ID:[/#808080]      [bold #00FFFF]{tid}[/]\n"
+        f"  [#808080]Robot(s):[/#808080] [bold #00FFFF]{robots_str}[/]\n"
+        f"  [#808080]Kind:[/#808080]    {'cooperative' if is_coop else 'solo'}\n"
+        f"  [#808080]Params:[/#808080]  {param_str}",
+        title="[bold #00FFFF]Confirm Task[/]", border_style="#C0C0C0"))
+
+    confirm = console.input("  [#00FFFF]Queue this task?[/#00FFFF] [#808080](y/n)[/#808080] "
+                            "[#C0C0C0]›[/#C0C0C0] ").strip().lower()
+    if confirm not in ("y", "yes"):
+        console.print("  [#808080]Cancelled.[/#808080]\n"); return
+
+    console.print(f"\n  [bold #00FF88]✓[/]  [bold #00FFFF]{tid}[/] queued → {robots_str}\n")
+
+
 @task_app.command("types")
 def task_types() -> None:
     """List every available task type with its policy and robot requirements."""
