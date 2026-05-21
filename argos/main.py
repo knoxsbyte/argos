@@ -309,6 +309,78 @@ def task_cancel(
     console.print(f"  [bold #00FF88]✔[/bold #00FF88]  Task {task_id} cancelled")
 
 
+@task_app.command("types")
+def task_types() -> None:
+    """List every available task type with its policy and robot requirements."""
+    from argos.tasks.library import TaskLibrary
+    lib = TaskLibrary.get_instance()
+
+    table = Table(border_style="#C0C0C0", header_style="bold #00FFFF", show_lines=False)
+    table.add_column("#",          style="#808080",       width=3)
+    table.add_column("Type",       style="bold #C0C0C0",  no_wrap=True)
+    table.add_column("Kind",       no_wrap=True)
+    table.add_column("Policy",     style="#00FFFF")
+    table.add_column("Min robots", style="#808080",       no_wrap=True)
+
+    for i, name in enumerate(sorted(lib.list_types()), 1):
+        cfg  = lib.get_config(name)
+        kind = "[bold #FFD700]cooperative[/]" if lib.is_cooperative(name) else "solo"
+        table.add_row(str(i), name, kind, cfg.get("policy", "—"), str(lib.min_robots(name)))
+
+    console.print()
+    console.print(Panel(table, title="[bold #00FFFF]Task Types[/]", border_style="#C0C0C0"))
+    console.print()
+
+
+@task_app.command("create")
+def task_create(
+    task_type: str = typer.Argument(..., help="Task type (run 'argos task types' to list)"),
+    robots: list[str] = typer.Option([], "--robot", "-r",
+                                     help="Robot name(s) to assign (repeat for multiple)"),
+    zone:   Optional[str] = typer.Option(None, "--zone",   "-z", help="Zone label (e.g. A)"),
+    target: Optional[str] = typer.Option(None, "--target", "-t", help="Surface/object target"),
+    pos:    Optional[str] = typer.Option(None, "--pos",    "-p",
+                                         help="Position x,y in metres (e.g. 2.0,1.5)"),
+) -> None:
+    """Directly schedule a specific task to one or more robots — no LLM decomposition."""
+    from argos.tasks.library import TaskLibrary
+    lib = TaskLibrary.get_instance()
+
+    if task_type not in lib.list_types():
+        console.print(f"\n  [bold #FF4444]Unknown task type:[/] {task_type}")
+        console.print(f"  [#808080]Run [bold]argos task types[/] to see all options.[/]\n")
+        raise typer.Exit(1)
+
+    cfg      = lib.get_config(task_type)
+    min_r    = lib.min_robots(task_type)
+    is_coop  = lib.is_cooperative(task_type)
+    assigned = robots if robots else ["auto-assign"]
+
+    if len(assigned) < min_r and assigned != ["auto-assign"]:
+        console.print(f"  [bold #FFD700]Warning:[/] {task_type} needs {min_r} robot(s), "
+                      f"got {len(assigned)}.")
+
+    params: dict = {}
+    if zone:   params["zone"]    = zone
+    if target: params["target"]  = target
+    if pos:    params["bed_pos"] = [float(x) for x in pos.split(",")]
+
+    import uuid
+    tid = f"T-{str(uuid.uuid4())[:6].upper()}"
+    param_lines = "\n".join(f"  [#808080]{k}:[/#808080]  {v}" for k, v in params.items()) \
+                  or "  [#808080](none)[/#808080]"
+
+    console.print(Panel(
+        f"[bold #C0C0C0]{task_type}[/]\n\n"
+        f"  [#808080]ID:[/#808080]      [bold #00FFFF]{tid}[/bold #00FFFF]\n"
+        f"  [#808080]Robot(s):[/#808080] [bold #00FFFF]{', '.join(assigned)}[/bold #00FFFF]\n"
+        f"  [#808080]Kind:[/#808080]    {'cooperative' if is_coop else 'solo'}\n"
+        f"  [#808080]Policy:[/#808080]  {cfg.get('policy', '—')}\n"
+        f"{param_lines}",
+        title="[bold #00FFFF]Task Scheduled[/]", border_style="#C0C0C0"))
+    console.print(f"  [bold #00FF88]✓[/]  {tid} queued\n")
+
+
 @task_app.command("status")
 def task_status(
     task_id: str = typer.Argument(..., help="Task ID to inspect"),

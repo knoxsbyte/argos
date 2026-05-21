@@ -101,8 +101,12 @@ def render_task_table(tasks: list[dict]) -> Table:
 HELP_TEXT = f"""[bold {CYAN}]Commands[/]
 
   [bold {SILVER}]status[/]                          Show fleet and task overview
-  [bold {SILVER}]task add[/] [italic]"<goal>"[/]            Add a cleaning task (natural language)
-  [bold {SILVER}]task list[/]                       List all tasks
+  [bold {SILVER}]task add[/] [italic]"<goal>"[/]            Add a task via natural language (LLM decomposed)
+  [bold {SILVER}]task create[/] [italic]<type>[/] [--robot N] [--zone Z] [--target T]
+                              Schedule a specific task directly to a robot
+  [bold {SILVER}]task build[/]                      Interactive wizard — guided task creation
+  [bold {SILVER}]task types[/]                      List all available task types
+  [bold {SILVER}]task list[/]                       List all queued/active/done tasks
   [bold {SILVER}]task cancel[/] [italic]<id>[/]             Cancel a task
   [bold {SILVER}]task status[/] [italic]<id>[/]             Show task detail
   [bold {SILVER}]connect[/] [italic]<ip>[/] [[italic]--name NAME[/]]    Connect a Unitree G1 robot
@@ -214,6 +218,12 @@ class ArgosREPL:
                     console.print()
                     return
             console.print(f"  [{RED}]Task not found:[/] {tid}\n")
+        elif sub == "create":
+            self._cmd_task_create(args[1:])
+        elif sub == "build":
+            self._cmd_task_build()
+        elif sub == "types":
+            self._cmd_task_types()
         else:
             console.print(f"  [{YELLOW}]Unknown sub-command:[/] {sub}\n")
 
@@ -239,6 +249,249 @@ class ArgosREPL:
                     if r["name"] in t["robots"]:
                         r["status"] = "CLEANING"
                         r["task"] = t["name"]
+
+    # ── task create / build / types ───────────────────────────────────────────
+
+    def _cmd_task_types(self, args: list[str] = []) -> None:
+        """Show every task type available in the library."""
+        from argos.tasks.library import TaskLibrary
+        lib = TaskLibrary.get_instance()
+
+        t = Table(show_header=True, header_style=f"bold {CYAN}",
+                  border_style=SILVER, box=_box(), expand=False, min_width=68)
+        t.add_column("#",         style=DIM,    width=3,  no_wrap=True)
+        t.add_column("Type",      style=f"bold {SILVER}", no_wrap=True)
+        t.add_column("Kind",      style=DIM,    no_wrap=True)
+        t.add_column("Policy",    style=CYAN)
+        t.add_column("Min robots",style=DIM,    no_wrap=True)
+
+        for i, name in enumerate(sorted(lib.list_types()), 1):
+            cfg  = lib.get_config(name)
+            kind = f"[{YELLOW}]cooperative[/]" if lib.is_cooperative(name) else "solo"
+            t.add_row(str(i), name,
+                      kind,
+                      cfg.get("policy", "—"),
+                      str(lib.min_robots(name)))
+
+        console.print(Panel(t, title=f"[bold {CYAN}]Available Task Types[/]",
+                            border_style=SILVER))
+        console.print(f"  [{DIM}]Use [bold]task create <type>[/] to schedule directly, "
+                      f"or [bold]task build[/] for the guided wizard.[/]\n")
+
+    def _cmd_task_create(self, args: list[str]) -> None:
+        """
+        Direct task scheduling — bypasses LLM decomposition.
+
+        Usage:
+          task create <type> [--robot NAME] [--zone ZONE] [--target TARGET]
+
+        Examples:
+          task create sweep_floor --robot G1-Alpha --zone A
+          task create wipe_surface --robot G1-Alpha --target counter
+          task create make_bed --robot G1-Alpha --robot G1-Beta
+        """
+        if not args or args[0].startswith("--"):
+            self._cmd_task_types()
+            return
+
+        from argos.tasks.library import TaskLibrary
+        lib = TaskLibrary.get_instance()
+        task_type = args[0]
+
+        if task_type not in lib.list_types():
+            console.print(f"\n  [{RED}]Unknown task type:[/] {task_type}")
+            console.print(f"  [{DIM}]Run [bold]task types[/] to see all available types.[/]\n")
+            return
+
+        # Parse --robot (can appear multiple times), --zone, --target
+        robots_given: list[str] = []
+        params: dict = {}
+        i = 1
+        while i < len(args):
+            if args[i] == "--robot" and i + 1 < len(args):
+                robots_given.append(args[i + 1]); i += 2
+            elif args[i] == "--zone" and i + 1 < len(args):
+                params["zone"] = args[i + 1]; i += 2
+            elif args[i] == "--target" and i + 1 < len(args):
+                params["target"] = args[i + 1]; i += 2
+            elif args[i] == "--pos" and i + 1 < len(args):
+                params["bed_pos"] = [float(x) for x in args[i + 1].split(",")]; i += 2
+            else:
+                i += 1
+
+        # Validate / auto-assign robots
+        cfg          = lib.get_config(task_type)
+        min_r        = lib.min_robots(task_type)
+        is_coop      = lib.is_cooperative(task_type)
+        known_names  = [r["name"] for r in self._robots]
+
+        if robots_given:
+            for rn in robots_given:
+                if rn not in known_names:
+                    console.print(f"\n  [{RED}]Robot not connected:[/] {rn}  "
+                                  f"[{DIM}](connected: {', '.join(known_names) or 'none'})[/]\n")
+                    return
+            assigned = robots_given
+        elif known_names:
+            assigned = known_names[:min_r]
+        else:
+            assigned = ["—"]
+
+        if len(assigned) < min_r:
+            console.print(f"\n  [{YELLOW}]Warning:[/] {task_type} requires {min_r} robot(s), "
+                          f"only {len(assigned)} assigned.\n")
+
+        # Queue the task
+        self._task_counter += 1
+        tid       = f"t{self._task_counter:03d}"
+        robots_str = " + ".join(assigned)
+        self._tasks.append({"id": tid, "name": task_type,
+                             "type": "cooperative" if is_coop else "solo",
+                             "robots": robots_str, "status": "ACTIVE",
+                             "params": params})
+
+        # Update robot state
+        for r in self._robots:
+            if r["name"] in assigned:
+                r["status"] = "CLEANING"
+                r["task"]   = task_type
+
+        # Summary panel
+        param_lines = "\n".join(f"  [{DIM}]{k}:[/]  {v}" for k, v in params.items()) or \
+                      f"  [{DIM}](no extra params)[/]"
+        console.print(Panel(
+            f"[bold {SILVER}]{task_type}[/]\n"
+            f"  [{DIM}]ID:[/]      [{CYAN}]{tid}[/]\n"
+            f"  [{DIM}]Robot(s):[/] [{CYAN}]{robots_str}[/]\n"
+            f"  [{DIM}]Kind:[/]    {'cooperative' if is_coop else 'solo'}\n"
+            f"  [{DIM}]Policy:[/]  {cfg.get('policy','—')}\n"
+            f"{param_lines}",
+            title=f"[bold {CYAN}]Task Created[/]", border_style=SILVER))
+        console.print(f"  [{GREEN}]✓[/] [{CYAN}]{tid}[/] queued → [{CYAN}]{robots_str}[/]\n")
+
+    def _cmd_task_build(self, args: list[str] = []) -> None:
+        """Interactive step-by-step task creation wizard."""
+        from argos.tasks.library import TaskLibrary
+        lib   = TaskLibrary.get_instance()
+        types = sorted(lib.list_types())
+
+        console.print()
+        console.print(f"[bold {CYAN}]Task Builder[/] [{DIM}]— step-by-step wizard (blank = cancel)[/]\n")
+
+        # ── Step 1: pick task type ────────────────────────────────────────────
+        for i, name in enumerate(types, 1):
+            coop = f" [{YELLOW}][coop][/]" if lib.is_cooperative(name) else ""
+            console.print(f"  [{CYAN}]{i:>2}.[/] [{SILVER}]{name}[/]{coop}")
+        console.print()
+
+        raw = console.input(f"  [{CYAN}]Select task type[/] [{DIM}](number or name)[/] [{SILVER}]›[/] ").strip()
+        if not raw:
+            console.print(f"  [{DIM}]Cancelled.[/]\n"); return
+
+        if raw.isdigit() and 1 <= int(raw) <= len(types):
+            task_type = types[int(raw) - 1]
+        elif raw in types:
+            task_type = raw
+        else:
+            console.print(f"  [{RED}]Invalid selection.[/]\n"); return
+
+        cfg     = lib.get_config(task_type)
+        min_r   = lib.min_robots(task_type)
+        is_coop = lib.is_cooperative(task_type)
+        console.print(f"\n  [{GREEN}]✓[/] Selected: [{CYAN}]{task_type}[/]  "
+                      f"[{DIM}]policy={cfg.get('policy','—')}  "
+                      f"min_robots={min_r}[/]\n")
+
+        # ── Step 2: pick robot(s) ─────────────────────────────────────────────
+        known = [r["name"] for r in self._robots]
+        assigned: list[str] = []
+
+        if not known:
+            console.print(f"  [{YELLOW}]No robots connected — task will be queued unassigned.[/]")
+            assigned = ["—"]
+        else:
+            for i, rn in enumerate(known, 1):
+                bat = next((r["battery"] for r in self._robots if r["name"] == rn), 0)
+                console.print(f"  [{CYAN}]{i}.[/] [{SILVER}]{rn}[/]  [{DIM}]battery {bat:.0f}%[/]")
+            console.print()
+
+            need = f"{min_r}" if not is_coop else f"{min_r}+ (cooperative)"
+            raw2 = console.input(
+                f"  [{CYAN}]Assign robot(s)[/] [{DIM}](comma-separated numbers, need {need})[/] [{SILVER}]›[/] "
+            ).strip()
+            if not raw2:
+                console.print(f"  [{DIM}]Cancelled.[/]\n"); return
+
+            for tok in raw2.split(","):
+                tok = tok.strip()
+                if tok.isdigit() and 1 <= int(tok) <= len(known):
+                    assigned.append(known[int(tok) - 1])
+                elif tok in known:
+                    assigned.append(tok)
+
+            if not assigned:
+                console.print(f"  [{RED}]No valid robots selected.[/]\n"); return
+            if len(assigned) < min_r:
+                console.print(f"  [{YELLOW}]Warning:[/] {task_type} needs {min_r} robot(s), "
+                              f"got {len(assigned)}.")
+
+        console.print(f"\n  [{GREEN}]✓[/] Robot(s): [{CYAN}]{', '.join(assigned)}[/]\n")
+
+        # ── Step 3: params ────────────────────────────────────────────────────
+        params: dict = {}
+        PARAM_PROMPTS = {
+            "sweep_floor":    [("zone", "Zone label (e.g. A, B)")],
+            "vacuum_floor":   [("zone", "Zone label")],
+            "mop_floor":      [("zone", "Zone label")],
+            "wipe_surface":   [("target", "Surface target (e.g. counter, table)")],
+            "wipe_window":    [("target", "Window label (e.g. north, living-room)")],
+            "pick_up_object": [("object", "Object name to pick up")],
+            "sort_items":     [("source", "Source location"), ("destination", "Destination")],
+            "take_out_trash": [("bin_location", "Bin location (e.g. kitchen)")],
+            "make_bed":       [("bed_pos", "Bed centre x,y (e.g. 2.0,1.5)")],
+            "change_sheets":  [("bed_pos", "Bed centre x,y")],
+            "move_furniture": [("furniture", "Furniture name"), ("destination", "Move to x,y")],
+            "organize_shelf": [("shelf", "Shelf label or location")],
+        }
+
+        prompts = PARAM_PROMPTS.get(task_type, [])
+        if prompts:
+            console.print(f"  [{DIM}]Parameters (press Enter to skip):[/]\n")
+            for key, label in prompts:
+                val = console.input(f"  [{CYAN}]{label}[/] [{SILVER}]›[/] ").strip()
+                if val:
+                    if key == "bed_pos" and "," in val:
+                        params[key] = [float(x) for x in val.split(",")]
+                    else:
+                        params[key] = val
+            console.print()
+
+        # ── Step 4: confirm ───────────────────────────────────────────────────
+        param_str = "  ".join(f"{k}={v}" for k, v in params.items()) or "(none)"
+        console.print(Panel(
+            f"[bold {SILVER}]{task_type}[/]\n"
+            f"  [{DIM}]Robot(s):[/] [{CYAN}]{', '.join(assigned)}[/]\n"
+            f"  [{DIM}]Params:[/]   {param_str}",
+            title=f"[bold {CYAN}]Confirm Task[/]", border_style=SILVER))
+
+        confirm = console.input(f"  [{CYAN}]Queue this task?[/] [{DIM}](y/n)[/] [{SILVER}]›[/] ").strip().lower()
+        if confirm not in ("y", "yes"):
+            console.print(f"  [{DIM}]Cancelled.[/]\n"); return
+
+        # Queue it
+        self._task_counter += 1
+        tid        = f"t{self._task_counter:03d}"
+        robots_str = " + ".join(assigned)
+        self._tasks.append({"id": tid, "name": task_type,
+                             "type": "cooperative" if is_coop else "solo",
+                             "robots": robots_str, "status": "ACTIVE",
+                             "params": params})
+        for r in self._robots:
+            if r["name"] in assigned:
+                r["status"] = "CLEANING"
+                r["task"]   = task_type
+
+        console.print(f"\n  [{GREEN}]✓[/] [{CYAN}]{tid}[/] queued → [{CYAN}]{robots_str}[/]\n")
 
     def _cmd_connect(self, args: list[str]) -> None:
         if not args:
