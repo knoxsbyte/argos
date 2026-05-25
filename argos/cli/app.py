@@ -109,8 +109,14 @@ HELP_TEXT = f"""[bold {CYAN}]Commands[/]
   [bold {SILVER}]task list[/]                       List all queued/active/done tasks
   [bold {SILVER}]task cancel[/] [italic]<id>[/]             Cancel a task
   [bold {SILVER}]task status[/] [italic]<id>[/]             Show task detail
+  [bold {SILVER}]zone partition[/] [--robots N] [--strategy S]
+                              Divide room into zones (strips|quadrant|voronoi)
+  [bold {SILVER}]zone list[/]                       Show all zones with coverage bars
+  [bold {SILVER}]zone assign[/] [italic]<zone-id> <robot>[/]  Assign a robot to a zone
+  [bold {SILVER}]zone map[/]                        ASCII coverage map of the room
   [bold {SILVER}]connect[/] [italic]<ip>[/] [[italic]--name NAME[/]]    Connect a Unitree G1 robot
   [bold {SILVER}]disconnect[/] [italic]<name>[/]            Disconnect a robot
+  [bold {SILVER}]battery[/]                         Show battery levels and dock status
   [bold {SILVER}]train[/]                           Show training commands
   [bold {SILVER}]sim[/]                             Launch MuJoCo simulation
   [bold {SILVER}]clear[/]                           Clear screen
@@ -148,6 +154,7 @@ class ArgosREPL:
             "status":     self._cmd_status,
             "fleet":      self._cmd_status,
             "task":       self._cmd_task,
+            "zone":       self._cmd_zone,
             "connect":    self._cmd_connect,
             "disconnect": self._cmd_disconnect,
             "battery":    self._cmd_battery,
@@ -561,6 +568,229 @@ class ArgosREPL:
                             border_style=SILVER))
         console.print()
 
+    # ── zone ─────────────────────────────────────────────────────────────────
+
+    def _cmd_zone(self, args: list[str] = []) -> None:
+        """
+        Room zone management.
+
+        Usage:
+          zone                           Show zone summary
+          zone partition [--robots N] [--strategy strips|quadrant|voronoi]
+          zone list                      Table of all zones
+          zone assign <zone-id> <robot>  Assign a robot to a zone
+          zone map                       ASCII coverage map
+          zone reset                     Clear all zones
+        """
+        from argos.navigation.room import RoomRegistry
+        reg = RoomRegistry.get_instance()
+
+        sub = args[0].lower() if args else "list"
+
+        if sub == "partition":
+            self._zone_partition(args[1:], reg)
+        elif sub == "list":
+            self._zone_list(reg)
+        elif sub == "assign" and len(args) >= 3:
+            self._zone_assign(args[1], args[2], reg)
+        elif sub == "assign":
+            console.print(f"  [{YELLOW}]Usage:[/] zone assign <zone-id> <robot>\n")
+        elif sub == "map":
+            self._zone_map(reg)
+        elif sub == "reset":
+            from argos.navigation.room import RoomRegistry as _R
+            _R.reset()
+            console.print(f"  [{YELLOW}]⊘[/] Zone registry cleared.\n")
+        else:
+            self._zone_list(reg)
+
+    def _zone_partition(self, args: list[str], reg) -> None:
+        num_robots = 2
+        strategy   = "strips"
+        i = 0
+        while i < len(args):
+            if args[i] in ("--robots", "-n") and i + 1 < len(args):
+                try:
+                    num_robots = int(args[i + 1])
+                except ValueError:
+                    pass
+                i += 2
+            elif args[i] in ("--strategy", "-s") and i + 1 < len(args):
+                strategy = args[i + 1]
+                i += 2
+            else:
+                i += 1
+
+        valid = ("strips", "quadrant", "voronoi")
+        if strategy not in valid:
+            console.print(f"  [{RED}]Unknown strategy:[/] {strategy}  "
+                          f"[{DIM}](choose: {', '.join(valid)})[/]\n")
+            return
+
+        mgr = reg.get_room()
+        if mgr is None:
+            console.print(f"  [{RED}]No active room.[/]\n")
+            return
+
+        mgr.zones.clear()
+
+        robot_names = [r["name"] for r in self._robots]
+        if strategy == "voronoi" and len(robot_names) == num_robots:
+            import math
+            bx0, by0, bx1, by1 = mgr.room_bounds
+            positions = [
+                (bx0 + (bx1 - bx0) * (i + 0.5) / num_robots, (by0 + by1) / 2)
+                for i in range(num_robots)
+            ]
+            zones = mgr.partition(num_robots, "voronoi", robot_positions=positions)
+        else:
+            zones = mgr.partition(num_robots, strategy)
+
+        # Auto-assign connected robots round-robin
+        for idx, zone in enumerate(zones):
+            if idx < len(robot_names):
+                zone.assigned_robot = robot_names[idx]
+                for r in self._robots:
+                    if r["name"] == robot_names[idx]:
+                        r["zone"] = zone.zone_id
+
+        bx0, by0, bx1, by1 = mgr.room_bounds
+        console.print(Panel(
+            f"  [{DIM}]Room:[/] [{CYAN}]{reg.active_name()}[/]  "
+            f"[{DIM}]{bx1-bx0:.1f}m × {by1-by0:.1f}m[/]\n"
+            f"  [{DIM}]Strategy:[/] {strategy}   "
+            f"[{DIM}]Zones:[/] [{CYAN}]{len(zones)}[/]\n\n"
+            + "\n".join(
+                f"  [{CYAN}]{z.zone_id}[/]  "
+                f"[{DIM}]bounds=({z.bounds[0]:.1f},{z.bounds[1]:.1f})→"
+                f"({z.bounds[2]:.1f},{z.bounds[3]:.1f})[/]  "
+                f"area=[{SILVER}]{z.area:.1f}m²[/]  "
+                f"robot=[{CYAN}]{z.assigned_robot or '—'}[/]"
+                for z in zones
+            ),
+            title=f"[bold {CYAN}]Zones Partitioned[/]", border_style=SILVER))
+        console.print(f"  [{GREEN}]✓[/] {len(zones)} zone(s) created.  "
+                      f"[{DIM}]Use [bold]zone map[/] to visualise.[/]\n")
+
+    def _zone_list(self, reg) -> None:
+        mgr = reg.get_room()
+        console.print()
+        if mgr is None or not mgr.zones:
+            console.print(f"  [{DIM}]No zones defined.[/]  "
+                          f"Use [bold]zone partition[/] to create zones.\n")
+            return
+
+        t = Table(show_header=True, header_style=f"bold {CYAN}",
+                  border_style=SILVER, box=_box(), expand=False, min_width=72)
+        t.add_column("Zone",    style=f"bold {CYAN}", no_wrap=True, width=12)
+        t.add_column("Robot",   style=CYAN,           no_wrap=True, width=14)
+        t.add_column("Coverage",                      no_wrap=True, width=24)
+        t.add_column("Area",    style=DIM,            no_wrap=True, width=10)
+        t.add_column("Bounds",  style=DIM)
+
+        for z in mgr.zones.values():
+            pct   = z.coverage_pct * 100
+            filled = round(pct / 5)        # bar out of 20 chars
+            color  = GREEN if pct >= 80 else (YELLOW if pct >= 30 else SILVER)
+            bar    = f"[{color}]{'█' * filled}{'░' * (20 - filled)}[/] {pct:.1f}%"
+            bounds = (f"({z.bounds[0]:.1f},{z.bounds[1]:.1f})→"
+                      f"({z.bounds[2]:.1f},{z.bounds[3]:.1f})")
+            t.add_row(z.zone_id, z.assigned_robot or "—", bar,
+                      f"{z.area:.1f} m²", bounds)
+
+        overall = mgr.overall_coverage() * 100
+        oc = GREEN if overall >= 80 else (YELLOW if overall >= 30 else SILVER)
+        console.print(Panel(
+            t,
+            title=f"[bold {CYAN}]Zones — {reg.active_name()}[/]  "
+                  f"[{DIM}]overall:[/] [{oc}]{overall:.1f}%[/]",
+            border_style=SILVER))
+        console.print()
+
+    def _zone_assign(self, zone_id: str, robot_name: str, reg) -> None:
+        mgr = reg.get_room()
+        if mgr is None:
+            console.print(f"  [{RED}]No active room.[/]\n"); return
+        if zone_id not in mgr.zones:
+            console.print(f"  [{RED}]Zone not found:[/] {zone_id}  "
+                          f"[{DIM}](run [bold]zone list[/])[/]\n"); return
+
+        mgr.assign_robot(zone_id, robot_name)
+        for r in self._robots:
+            if r["name"] == robot_name:
+                r["zone"] = zone_id
+        console.print(f"  [{GREEN}]✓[/] [{CYAN}]{robot_name}[/] → [{CYAN}]{zone_id}[/]\n")
+
+    def _zone_map(self, reg) -> None:
+        mgr = reg.get_room()
+        console.print()
+        if mgr is None or not mgr.zones:
+            console.print(f"  [{DIM}]No zones defined.[/]  "
+                          f"Use [bold]zone partition[/] first.\n")
+            return
+
+        bx0, by0, bx1, by1 = mgr.room_bounds
+        room_w = bx1 - bx0
+        room_h = by1 - by0
+        zones  = list(mgr.zones.values())
+
+        overall = mgr.overall_coverage() * 100
+        oc = GREEN if overall >= 80 else (YELLOW if overall >= 30 else SILVER)
+
+        INNER_W  = 18   # chars wide inside box borders
+        BOX_H    = 3    # fill rows
+        SEP      = "  "
+
+        # ── header ────────────────────────────────────────────────────────────
+        console.print(
+            f"  [{SILVER}]Room:[/] [{CYAN}]{reg.active_name()}[/]  "
+            f"[{DIM}]{room_w:.1f}m × {room_h:.1f}m[/]  "
+            f"[{DIM}]overall coverage:[/] [{oc}]{overall:.1f}%[/]\n"
+        )
+
+        # ── zone label row ────────────────────────────────────────────────────
+        row_labels = "  "
+        for z in zones:
+            label = z.zone_id
+            if z.assigned_robot:
+                label += f" [{z.assigned_robot}]"
+            row_labels += f"[bold {CYAN}]{label:<{INNER_W + 2}}[/]{SEP}"
+        console.print(row_labels)
+
+        # ── top border ────────────────────────────────────────────────────────
+        top = "  " + SEP.join(f"[{SILVER}]┌{'─' * INNER_W}┐[/]" for _ in zones)
+        console.print(top)
+
+        # ── fill rows ─────────────────────────────────────────────────────────
+        for _ in range(BOX_H):
+            row = "  "
+            for z in zones:
+                pct    = z.coverage_pct
+                filled = round(pct * INNER_W)
+                empty  = INNER_W - filled
+                fc     = GREEN if pct >= 0.8 else (CYAN if pct >= 0.3 else SILVER)
+                row += (
+                    f"[{SILVER}]│[/]"
+                    f"[{fc}]{'▓' * filled}[/]"
+                    f"[{DIM}]{'░' * empty}[/]"
+                    f"[{SILVER}]│[/]{SEP}"
+                )
+            console.print(row)
+
+        # ── bottom border ─────────────────────────────────────────────────────
+        bot = "  " + SEP.join(f"[{SILVER}]└{'─' * INNER_W}┘[/]" for _ in zones)
+        console.print(bot)
+
+        # ── stats row ─────────────────────────────────────────────────────────
+        row_stats = "  "
+        for z in zones:
+            pct_str  = f"{z.coverage_pct * 100:.1f}%"
+            area_str = f"{z.area:.1f}m²"
+            stat     = f"{pct_str}  {area_str}"
+            row_stats += f"[{DIM}]{stat:<{INNER_W + 2}}[/]{SEP}"
+        console.print(row_stats)
+        console.print()
+
     def _cmd_train(self, args: list[str] = []) -> None:
         console.print(Panel(
             f"  [{SILVER}]Run these from your shell:[/]\n\n"
@@ -652,10 +882,23 @@ class DemoArgosREPL(ArgosREPL):
         # Pre-populate two connected robots
         self._robots = [
             {"name": "G1-Alpha", "ip": "192.168.1.10", "status": "CLEANING",
-             "battery": 87.0, "task": "wipe_surface", "zone": "A"},
+             "battery": 87.0, "task": "wipe_surface", "zone": "zone_0"},
             {"name": "G1-Beta",  "ip": "192.168.1.11", "status": "CLEANING",
-             "battery": 72.0, "task": "make_bed",     "zone": "B"},
+             "battery": 72.0, "task": "make_bed",     "zone": "zone_1"},
         ]
+
+        # Pre-partition the default room into two zones, assign robots
+        from argos.navigation.room import RoomRegistry
+        RoomRegistry.reset()
+        reg = RoomRegistry.get_instance()
+        mgr = reg.get_room()
+        if mgr is not None:
+            zones = mgr.partition(2, "strips")
+            zones[0].assigned_robot = "G1-Alpha"
+            zones[1].assigned_robot = "G1-Beta"
+            # Seed realistic initial coverage
+            zones[0].coverage_pct = 0.45
+            zones[1].coverage_pct = 0.12
 
         # Pre-populate a realistic task history
         self._tasks = [
@@ -686,6 +929,7 @@ class DemoArgosREPL(ArgosREPL):
 
     def _simulate(self) -> None:
         tick = 0
+        from argos.navigation.room import RoomRegistry
         while not self._stop_sim.is_set():
             time.sleep(4)
             tick += 1
@@ -697,6 +941,21 @@ class DemoArgosREPL(ArgosREPL):
                     if r["battery"] < 15:
                         r["status"] = "IDLE"
                         r["task"] = "—"
+
+            # Advance zone coverage each tick
+            try:
+                mgr = RoomRegistry.get_instance().get_room()
+                if mgr:
+                    for z in mgr.zones.values():
+                        robot_on = next(
+                            (r for r in self._robots
+                             if r.get("zone") == z.zone_id and r["status"] == "CLEANING"),
+                            None,
+                        )
+                        if robot_on:
+                            z.coverage_pct = min(1.0, z.coverage_pct + random.uniform(0.03, 0.07))
+            except Exception:
+                pass
 
             # Advance wipe_surface → DONE after ~20s, then start vacuum_rug
             if tick == 5:

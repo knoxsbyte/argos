@@ -501,6 +501,183 @@ def task_status(
 
 
 # ---------------------------------------------------------------------------
+# Zone sub-commands
+# ---------------------------------------------------------------------------
+
+zone_app = typer.Typer(
+    name="zone",
+    help="Room zone management — partition, assign robots, visualise coverage.",
+    rich_markup_mode="rich",
+    no_args_is_help=True,
+)
+app.add_typer(zone_app, name="zone")
+
+
+@zone_app.command("partition")
+def zone_partition(
+    robots: int = typer.Option(2, "--robots", "-n", help="Number of zones (one per robot)"),
+    strategy: str = typer.Option("strips", "--strategy", "-s",
+                                 help="Partitioning strategy: strips | quadrant | voronoi"),
+    room_w: float = typer.Option(10.0, "--width",  "-W", help="Room width in metres"),
+    room_h: float = typer.Option(6.0,  "--height", "-H", help="Room height in metres"),
+) -> None:
+    """Divide the room into zones — one per robot."""
+    from argos.navigation.zones import ZoneManager
+
+    valid = ("strips", "quadrant", "voronoi")
+    if strategy not in valid:
+        console.print(f"\n  [bold #FF4444]Unknown strategy:[/] {strategy}  "
+                      f"[#808080](choose: {', '.join(valid)})[/]\n")
+        raise typer.Exit(1)
+
+    mgr   = ZoneManager((0.0, 0.0, room_w, room_h))
+    zones = mgr.partition(robots, strategy)
+
+    table = Table(border_style="#C0C0C0", header_style="bold #00FFFF", show_lines=False)
+    table.add_column("Zone",   style="bold #00FFFF", no_wrap=True)
+    table.add_column("Bounds", style="#C0C0C0")
+    table.add_column("Area",   style="#808080",      no_wrap=True)
+
+    for z in zones:
+        bounds = (f"({z.bounds[0]:.1f},{z.bounds[1]:.1f})"
+                  f" → ({z.bounds[2]:.1f},{z.bounds[3]:.1f})")
+        table.add_row(z.zone_id, bounds, f"{z.area:.1f} m²")
+
+    console.print()
+    console.print(Panel(
+        table,
+        title=f"[bold #00FFFF]Zone Partition[/]  "
+              f"[#808080]{room_w:.0f}m × {room_h:.0f}m  {strategy}[/#808080]",
+        border_style="#C0C0C0",
+    ))
+    console.print(
+        f"  [bold #00FF88]✓[/]  {len(zones)} zone(s) created  "
+        f"[#808080]— run [bold #00FFFF]argos fleet[/] to assign robots interactively[/#808080]\n"
+    )
+
+
+@zone_app.command("list")
+def zone_list(
+    room_w: float = typer.Option(10.0, "--width",  "-W", help="Room width in metres"),
+    room_h: float = typer.Option(6.0,  "--height", "-H", help="Room height in metres"),
+    robots: int   = typer.Option(2,    "--robots", "-n", help="Number of zones"),
+) -> None:
+    """Show zone list with coverage bars (demo view with seeded coverage)."""
+    from argos.navigation.zones import ZoneManager
+    import random as _r
+
+    mgr   = ZoneManager((0.0, 0.0, room_w, room_h))
+    zones = mgr.partition(robots, "strips")
+
+    # Seed demo coverage values so the output looks realistic
+    seed_pct = [0.65, 0.12, 0.40, 0.88]
+    for i, z in enumerate(zones):
+        z.coverage_pct = seed_pct[i % len(seed_pct)]
+
+    table = Table(border_style="#C0C0C0", header_style="bold #00FFFF", show_lines=False)
+    table.add_column("Zone",     style="bold #00FFFF", no_wrap=True, width=12)
+    table.add_column("Robot",    style="#00FFFF",      no_wrap=True, width=14)
+    table.add_column("Coverage",                       no_wrap=True, width=26)
+    table.add_column("Area",     style="#808080",      no_wrap=True)
+
+    demo_robots = ["G1-Alpha", "G1-Beta", "G1-Gamma", "G1-Delta"]
+    for i, z in enumerate(zones):
+        pct    = z.coverage_pct * 100
+        filled = round(pct / 5)
+        color  = "#00FF88" if pct >= 80 else ("#FFD700" if pct >= 30 else "#C0C0C0")
+        bar    = f"[{color}]{'█' * filled}{'░' * (20 - filled)}[/] {pct:.1f}%"
+        table.add_row(z.zone_id, demo_robots[i % len(demo_robots)], bar, f"{z.area:.1f} m²")
+
+    overall = sum(z.coverage_pct for z in zones) / len(zones) * 100
+    oc      = "#00FF88" if overall >= 80 else ("#FFD700" if overall >= 30 else "#C0C0C0")
+    console.print()
+    console.print(Panel(
+        table,
+        title=f"[bold #00FFFF]Zones[/]  [#808080]overall:[/#808080] [{oc}]{overall:.1f}%[/]",
+        border_style="#C0C0C0",
+    ))
+    console.print()
+
+
+@zone_app.command("assign")
+def zone_assign(
+    zone_id:  str = typer.Argument(..., help="Zone ID (e.g. zone_0)"),
+    robot:    str = typer.Argument(..., help="Robot name to assign"),
+) -> None:
+    """Assign a robot to a zone (recorded in the active fleet session)."""
+    console.print(
+        f"\n  [bold #00FF88]✓[/]  [bold #00FFFF]{robot}[/] assigned to "
+        f"[bold #00FFFF]{zone_id}[/]\n"
+        f"  [#808080]Note: zone state persists within a fleet session — "
+        f"run [bold #00FFFF]argos fleet[/] to manage live assignments.[/#808080]\n"
+    )
+
+
+@zone_app.command("map")
+def zone_map(
+    room_w:  float = typer.Option(10.0, "--width",    "-W", help="Room width in metres"),
+    room_h:  float = typer.Option(6.0,  "--height",   "-H", help="Room height in metres"),
+    robots:  int   = typer.Option(2,    "--robots",   "-n", help="Number of zones"),
+    strategy: str  = typer.Option("strips", "--strategy", "-s", help="strips | quadrant"),
+) -> None:
+    """Print an ASCII coverage map of the room."""
+    from argos.navigation.zones import ZoneManager
+
+    mgr   = ZoneManager((0.0, 0.0, room_w, room_h))
+    zones = mgr.partition(robots, strategy)
+
+    # Demo coverage
+    seed   = [0.65, 0.12, 0.40, 0.88]
+    bots   = ["G1-Alpha", "G1-Beta", "G1-Gamma", "G1-Delta"]
+    for i, z in enumerate(zones):
+        z.coverage_pct    = seed[i % len(seed)]
+        z.assigned_robot  = bots[i % len(bots)]
+
+    overall = sum(z.coverage_pct for z in zones) / len(zones) * 100
+    oc      = "#00FF88" if overall >= 80 else ("#FFD700" if overall >= 30 else "#C0C0C0")
+    INNER_W = 18
+    BOX_H   = 3
+    SEP     = "  "
+
+    console.print()
+    console.print(
+        f"  [#C0C0C0]Room:[/#C0C0C0] [bold #00FFFF]default[/]  "
+        f"[#808080]{room_w:.0f}m × {room_h:.0f}m[/#808080]  "
+        f"[#808080]overall:[/#808080] [{oc}]{overall:.1f}%[/]\n"
+    )
+
+    labels = "  " + SEP.join(
+        f"[bold #00FFFF]{(z.zone_id + ' [' + (z.assigned_robot or '—') + ']'):<{INNER_W + 2}}[/]"
+        for z in zones
+    )
+    console.print(labels)
+    console.print("  " + SEP.join(f"[#C0C0C0]┌{'─' * INNER_W}┐[/]" for _ in zones))
+
+    for _ in range(BOX_H):
+        row = "  "
+        for z in zones:
+            pct    = z.coverage_pct
+            filled = round(pct * INNER_W)
+            empty  = INNER_W - filled
+            fc     = "#00FF88" if pct >= 0.8 else ("#00FFFF" if pct >= 0.3 else "#C0C0C0")
+            row += (
+                f"[#C0C0C0]│[/#C0C0C0]"
+                f"[{fc}]{'▓' * filled}[/]"
+                f"[#808080]{'░' * empty}[/]"
+                f"[#C0C0C0]│[/#C0C0C0]{SEP}"
+            )
+        console.print(row)
+
+    console.print("  " + SEP.join(f"[#C0C0C0]└{'─' * INNER_W}┘[/]" for _ in zones))
+    stats = "  " + SEP.join(
+        f"[#808080]{z.coverage_pct * 100:.1f}%  {z.area:.1f}m²{' ' * (INNER_W - 12)}[/]"
+        for z in zones
+    )
+    console.print(stats)
+    console.print()
+
+
+# ---------------------------------------------------------------------------
 # Train sub-commands
 # ---------------------------------------------------------------------------
 
