@@ -32,6 +32,7 @@ from argos.training.ingest import Episode, VideoFrame, VideoIngestor
 from argos.training.preprocess import ActionLabeler, PoseEstimator
 from argos.training.dataset import LeRobotDatasetBuilder
 from argos.training.finetune import FinetuneConfig, LoRAFinetuner
+from argos.training.augment import AugmentConfig, DataAugmentor
 from argos.training.evaluate import EvalConfig, EvalResult, PolicyEvaluator
 from argos.training.checkpoints import CheckpointRecord, CheckpointRegistry
 from argos.training.sim.mujoco_env import CleaningEnv
@@ -46,6 +47,9 @@ __all__ = [
     "ActionLabeler",
     # Dataset
     "LeRobotDatasetBuilder",
+    # Augmentation
+    "DataAugmentor",
+    "AugmentConfig",
     # Fine-tuning
     "LoRAFinetuner",
     "FinetuneConfig",

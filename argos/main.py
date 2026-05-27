@@ -808,6 +808,123 @@ def train_checkpoints(
     )
 
 
+@train_app.command("augment")
+def train_augment(
+    dataset:    Path = typer.Argument(...,
+                                      help="Path to processed dataset directory (or video dir for mock)"),
+    output:     Optional[Path] = typer.Option(None, "--output", "-o",
+                                              help="Output directory for augmented dataset"),
+    factor:     int  = typer.Option(2,    "--factor",    "-f",
+                                    help="Dataset size multiplier (2 = double, 3 = triple …)"),
+    flip:       bool = typer.Option(True,  "--flip/--no-flip",
+                                    help="Apply horizontal flip augmentation"),
+    jitter:     bool = typer.Option(True,  "--jitter/--no-jitter",
+                                    help="Apply colour jitter augmentation"),
+    noise:      bool = typer.Option(True,  "--noise/--no-noise",
+                                    help="Apply Gaussian noise to state/action vectors"),
+    speed:      bool = typer.Option(True,  "--speed/--no-speed",
+                                    help="Apply temporal speed jitter"),
+    seed:       Optional[int] = typer.Option(None, "--seed", "-s",
+                                             help="Random seed for reproducibility"),
+) -> None:
+    """Expand a training dataset by generating augmented episode copies."""
+    from argos.training.augment import AugmentConfig, DataAugmentor
+    from argos.training.ingest import VideoIngestor
+
+    if factor < 2:
+        console.print("  [bold #FF4444]--factor must be >= 2.[/]\n")
+        raise typer.Exit(1)
+
+    strategies = []
+    if flip:   strategies.append("horizontal_flip")
+    if jitter: strategies.append("color_jitter")
+    if noise:  strategies.append("gaussian_noise")
+    if speed:  strategies.append("speed_jitter")
+
+    if not strategies:
+        console.print("  [bold #FF4444]At least one augmentation strategy must be enabled.[/]\n")
+        raise typer.Exit(1)
+
+    out_dir = output or dataset.parent / f"{dataset.name}_augmented"
+
+    console.print(Panel(
+        f"  [#808080]Source:[/#808080]     [white]{dataset}[/white]\n"
+        f"  [#808080]Output:[/#808080]     [white]{out_dir}[/white]\n"
+        f"  [#808080]Factor:[/#808080]     [bold #00FFFF]{factor}×[/bold #00FFFF]\n"
+        f"  [#808080]Strategies:[/#808080] [#00FFFF]{', '.join(strategies)}[/#00FFFF]\n"
+        f"  [#808080]Seed:[/#808080]       [white]{seed if seed is not None else 'random'}[/white]",
+        title="[bold #00FFFF]Data Augmentation[/bold #00FFFF]",
+        border_style="#C0C0C0",
+    ))
+
+    # Load (or mock) source episodes
+    ingestor = VideoIngestor(target_fps=15.0)
+    if dataset.exists() and dataset.is_dir():
+        episodes = ingestor.ingest_directory(dataset)
+    else:
+        console.print(f"  [#FFD700]⚠[/#FFD700]  {dataset} not found — using mock episodes for demo.\n")
+        task_types = ["sweep_floor", "wipe_surface", "vacuum_floor", "make_bed"]
+        episodes = [
+            ingestor._mock_episode(
+                video_path=dataset / f"demo_{i:03d}.mp4",
+                task_type=task_types[i % len(task_types)],
+                language_instruction=f"demo task {i}",
+                episode_id=f"ep_{i:03d}",
+            )
+            for i in range(4)
+        ]
+
+    if not episodes:
+        console.print("  [bold #FF4444]No episodes found in source directory.[/]\n")
+        raise typer.Exit(1)
+
+    src_frames = sum(len(e.frames) for e in episodes)
+    console.print(
+        f"  [#C0C0C0]Loaded[/#C0C0C0]  [bold #00FFFF]{len(episodes)}[/] episode(s)  "
+        f"[bold #00FFFF]{src_frames:,}[/] frame(s)\n"
+    )
+
+    augmentor = DataAugmentor(strategies=strategies, seed=seed)
+    aug_to_generate = len(episodes) * (factor - 1)
+
+    with Progress(
+        SpinnerColumn(style="#00FFFF"),
+        TextColumn("[#C0C0C0]{task.description}"),
+        BarColumn(bar_width=30, style="#00FFFF", complete_style="#00FF88"),
+        TextColumn("[bold #00FFFF]{task.percentage:.0f}%"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        ptask = progress.add_task("Augmenting episodes…", total=aug_to_generate)
+
+        def _cb(done: int, total: int) -> None:
+            progress.update(ptask, completed=done,
+                            description=f"Augmenting episode {done}/{total}…")
+
+        expanded = augmentor.augment_dataset(episodes, factor=factor, progress_callback=_cb)
+
+    aug_episodes = expanded[len(episodes):]
+    aug_frames   = sum(len(e.frames) for e in aug_episodes)
+    total_frames = src_frames + aug_frames
+
+    console.print(Panel(
+        f"  [#808080]Original episodes:[/#808080]   [bold #00FFFF]{len(episodes):>6}[/]"
+        f"  [#808080]({src_frames:,} frames)[/#808080]\n"
+        f"  [#808080]Augmented copies:[/#808080]    [bold #00FFFF]{len(aug_episodes):>6}[/]"
+        f"  [#808080]({aug_frames:,} frames)[/#808080]\n"
+        f"  [#808080]Total:[/#808080]               [bold #00FF88]{len(expanded):>6}[/]"
+        f"  [#808080]({total_frames:,} frames)[/#808080]\n"
+        f"  [#808080]Multiplier:[/#808080]          [bold #00FFFF]{factor}×[/bold #00FFFF]\n"
+        f"  [#808080]Output:[/#808080]              [white]{out_dir}[/white]",
+        title="[bold #00FF88]Augmentation Complete[/bold #00FF88]",
+        border_style="#C0C0C0",
+    ))
+    console.print(
+        f"  [bold #00FF88]✔[/bold #00FF88]  {len(expanded)} episodes ready  "
+        f"[#808080]— run [bold #00FFFF]argos train finetune {out_dir}[/bold #00FFFF] next[/#808080]\n"
+    )
+
+
 @train_app.command("ingest")
 def train_ingest(
     video_dir: Path = typer.Argument(..., help="Directory containing training videos"),
