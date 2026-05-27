@@ -39,14 +39,21 @@ class CoopPhase(str, Enum):
 
 
 class RobotState(BaseModel):
-    """Full state snapshot from a G1 humanoid robot.
+    """Full state snapshot from a Unitree robot (G1 or Go2).
 
-    Joint ordering follows the Unitree G1 SDK convention (29 DOF).
+    Joint ordering follows the Unitree SDK convention:
+      - G1:  29 DOF (legs, waist, arms, grippers)
+      - Go2: 12 DOF (FL/FR/BL/BR × hip-yaw, hip-pitch, knee)
+
     IMU values are in SI units: accel [m/s²], gyro [rad/s].
     Position is in the world frame [m]. Orientation is a unit quaternion
     stored as (w, x, y, z).
     """
 
+    robot_model: str = Field(
+        default="unitree_g1",
+        description="Robot model identifier, e.g. 'unitree_g1' or 'unitree_go2'.",
+    )
     battery_percent: float = Field(
         default=100.0,
         ge=0.0,
@@ -55,11 +62,11 @@ class RobotState(BaseModel):
     )
     joint_positions: list[float] = Field(
         default_factory=lambda: [0.0] * 29,
-        description="Joint angles in radians, 29 values.",
+        description="Joint angles in radians. 29 values for G1, 12 for Go2.",
     )
     joint_velocities: list[float] = Field(
         default_factory=lambda: [0.0] * 29,
-        description="Joint angular velocities in rad/s, 29 values.",
+        description="Joint angular velocities in rad/s. 29 values for G1, 12 for Go2.",
     )
     imu_accel: list[float] = Field(
         default_factory=lambda: [0.0, 0.0, 9.81],
@@ -84,10 +91,17 @@ class RobotState(BaseModel):
 
     @field_validator("joint_positions", "joint_velocities")
     @classmethod
-    def _check_29_dof(cls, v: list[float]) -> list[float]:
-        if len(v) != 29:
-            raise ValueError(f"Expected 29 values, got {len(v)}")
+    def _check_dof(cls, v: list[float]) -> list[float]:
+        if len(v) not in (12, 29):
+            raise ValueError(
+                f"Expected 12 (Go2) or 29 (G1) joint values, got {len(v)}"
+            )
         return v
+
+    @property
+    def dof(self) -> int:
+        """Return the number of degrees of freedom inferred from joint count."""
+        return len(self.joint_positions)
 
     @field_validator("imu_accel", "imu_gyro", "position")
     @classmethod
@@ -138,28 +152,28 @@ JOINT_LIMITS_HIGH: list[float] = [
 
 
 class Action(BaseModel):
-    """Motor command sent to a G1 robot.
+    """Motor command sent to a Unitree robot (G1 or Go2).
 
-    joint_targets must have exactly 29 values matching the G1 DOF layout.
-    gripper_left and gripper_right are normalised [0, 1] where 0 = closed.
+    For G1: joint_targets should have 29 values.
+    For Go2: joint_targets should have 12 values; gripper fields are unused.
     duration_ms is how long the motion should take; the bridge interpolates.
     """
 
     joint_targets: list[float] = Field(
         default_factory=lambda: [0.0] * 29,
-        description="Target joint positions in radians, 29 values.",
+        description="Target joint positions in radians. 29 for G1, 12 for Go2.",
     )
     gripper_left: float = Field(
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="Left gripper opening fraction [0=closed, 1=open].",
+        description="Left gripper opening fraction [0=closed, 1=open]. G1 only.",
     )
     gripper_right: float = Field(
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="Right gripper opening fraction [0=closed, 1=open].",
+        description="Right gripper opening fraction [0=closed, 1=open]. G1 only.",
     )
     duration_ms: int = Field(
         default=500,
@@ -169,9 +183,11 @@ class Action(BaseModel):
 
     @field_validator("joint_targets")
     @classmethod
-    def _check_29_dof(cls, v: list[float]) -> list[float]:
-        if len(v) != 29:
-            raise ValueError(f"Expected 29 joint targets, got {len(v)}")
+    def _check_dof(cls, v: list[float]) -> list[float]:
+        if len(v) not in (12, 29):
+            raise ValueError(
+                f"Expected 12 (Go2) or 29 (G1) joint targets, got {len(v)}"
+            )
         return v
 
     def clipped(self) -> "Action":
@@ -196,16 +212,20 @@ class Action(BaseModel):
 
 
 class RobotInfo(BaseModel):
-    """Static metadata about a connected G1 robot."""
+    """Static metadata about a connected Unitree robot (G1 or Go2)."""
 
     robot_id: str = Field(description="Unique identifier assigned by the registry.")
-    name: str = Field(description="Human-readable name, e.g. 'G1-Alpha'.")
+    name: str = Field(description="Human-readable name, e.g. 'G1-Alpha' or 'Go2-Scout'.")
     ip: str = Field(description="IP address of the robot.")
-    model: str = Field(default="Unitree G1", description="Robot model string.")
-    dof: int = Field(default=29, description="Degrees of freedom.")
+    model: str = Field(default="Unitree G1", description="Human-readable robot model string.")
+    robot_model: str = Field(
+        default="unitree_g1",
+        description="Machine-readable model ID: 'unitree_g1' | 'unitree_go2'.",
+    )
+    dof: int = Field(default=29, description="Degrees of freedom (29 for G1, 12 for Go2).")
     capabilities: dict[str, Any] = Field(
         default_factory=dict,
-        description="Free-form capability flags, e.g. {'lidar': True, 'camera': True}.",
+        description="Free-form capability flags, e.g. {'lidar': True, 'has_arms': False}.",
     )
 
 

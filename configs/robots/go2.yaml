@@ -1,0 +1,211 @@
+# ARGOS — Unitree Go2 Quadruped Hardware Configuration
+#
+# The Go2 is a 12-DOF quadruped robot with:
+#   - 4 legs × 3 joints (hip-yaw, hip-pitch, knee)
+#   - Head-mounted RealSense D430 depth camera
+#   - Livox MID-360 360° LiDAR
+#   - IMU (6-axis + magnetometer)
+#   - No arms, no grippers — floor-only task execution
+#
+# Joint naming convention: {FL|FR|BL|BR}_{hip_yaw|hip_pitch|knee}
+# Joint limits are in radians (hardware-enforced safe values).
+
+model:
+  id: "unitree_go2"
+  display_name: "Unitree Go2"
+  variant: "EDU"           # EDU variant includes SDK high-level API
+  firmware: "1.0.25"
+
+# ── locomotion ────────────────────────────────────────────────────────────────
+locomotion:
+  type: "quadruped"
+  dof: 12
+  max_speed_ms: 3.5
+  max_angular_speed_rads: 3.14
+  gait_modes: ["trot", "amble", "crawl", "bound"]
+  default_gait: "trot"
+  control_freq_hz: 50
+  height_m: 0.30        # floor-to-body distance during nominal trot
+  footprint_m: 0.55     # approximate body width for coverage planning
+
+# ── joints ────────────────────────────────────────────────────────────────────
+# SDK index order: FL(0-2), FR(3-5), BL(6-8), BR(9-11)
+joints:
+  - index: 0
+    name: "fl_hip_yaw"
+    leg: "front_left"
+    limit_low_rad:  -0.863
+    limit_high_rad:  0.863
+    default_rad: 0.0
+
+  - index: 1
+    name: "fl_hip_pitch"
+    leg: "front_left"
+    limit_low_rad: -1.571
+    limit_high_rad:  3.927
+    default_rad: 0.8
+
+  - index: 2
+    name: "fl_knee"
+    leg: "front_left"
+    limit_low_rad: -2.775
+    limit_high_rad: -0.646
+    default_rad: -1.5
+
+  - index: 3
+    name: "fr_hip_yaw"
+    leg: "front_right"
+    limit_low_rad:  -0.863
+    limit_high_rad:  0.863
+    default_rad: 0.0
+
+  - index: 4
+    name: "fr_hip_pitch"
+    leg: "front_right"
+    limit_low_rad: -1.571
+    limit_high_rad:  3.927
+    default_rad: 0.8
+
+  - index: 5
+    name: "fr_knee"
+    leg: "front_right"
+    limit_low_rad: -2.775
+    limit_high_rad: -0.646
+    default_rad: -1.5
+
+  - index: 6
+    name: "bl_hip_yaw"
+    leg: "back_left"
+    limit_low_rad:  -0.863
+    limit_high_rad:  0.863
+    default_rad: 0.0
+
+  - index: 7
+    name: "bl_hip_pitch"
+    leg: "back_left"
+    limit_low_rad: -1.571
+    limit_high_rad:  3.927
+    default_rad: 0.8
+
+  - index: 8
+    name: "bl_knee"
+    leg: "back_left"
+    limit_low_rad: -2.775
+    limit_high_rad: -0.646
+    default_rad: -1.5
+
+  - index: 9
+    name: "br_hip_yaw"
+    leg: "back_right"
+    limit_low_rad:  -0.863
+    limit_high_rad:  0.863
+    default_rad: 0.0
+
+  - index: 10
+    name: "br_hip_pitch"
+    leg: "back_right"
+    limit_low_rad: -1.571
+    limit_high_rad:  3.927
+    default_rad: 0.8
+
+  - index: 11
+    name: "br_knee"
+    leg: "back_right"
+    limit_low_rad: -2.775
+    limit_high_rad: -0.646
+    default_rad: -1.5
+
+# ── sensors ───────────────────────────────────────────────────────────────────
+sensors:
+  cameras:
+    - id: "head_rgb"
+      type: "realsense_d430"
+      topic: "rt/camera/head/color"
+      resolution: [848, 480]
+      fps: 30
+      format: "bgr8"
+      mount: "head_front"
+
+    - id: "head_depth"
+      type: "realsense_d430"
+      topic: "rt/camera/head/depth"
+      resolution: [848, 480]
+      fps: 30
+      format: "z16"
+      mount: "head_front"
+
+  lidar:
+    - id: "mid360"
+      type: "livox_mid360"
+      topic: "rt/livox/lidar"
+      fov_horizontal_deg: 360
+      fov_vertical_deg: 59       # -7° to +52°
+      range_m: 40.0
+      points_per_second: 200000
+      mount: "body_top"
+
+  imu:
+    - id: "body_imu"
+      type: "mpu6050_mag"
+      topic: "rt/imu"
+      accel_range_g: 8
+      gyro_range_dps: 2000
+      mag_enabled: true
+
+# ── networking ────────────────────────────────────────────────────────────────
+network:
+  transport: "cyclonedds"
+  sdk_version: "sdk2"
+  default_interface: "eth0"
+  default_ip: "192.168.123.161"    # Go2 factory default
+  control_port: 8082
+  video_port: 9000
+
+# ── capabilities ─────────────────────────────────────────────────────────────
+capabilities:
+  has_arms: false
+  has_grippers: false
+  has_lidar: true
+  has_depth_camera: true
+  has_wrist_cameras: false
+  manipulation: false
+  floor_cleaning: true
+  stair_climbing: true
+  obstacle_avoidance: true
+
+# ── battery ───────────────────────────────────────────────────────────────────
+battery:
+  nominal_voltage_v: 29.4
+  capacity_wh: 99.0
+  runtime_hours_est: 2.0
+  low_threshold_pct: 20
+  critical_threshold_pct: 10
+  charging_time_hours: 1.5
+
+# ── ARGOS policy paths ────────────────────────────────────────────────────────
+policies:
+  sweep_floor:
+    type: "diffusion"
+    checkpoint: "data/models/go2_sweep_floor_best.pt"
+  vacuum_floor:
+    type: "diffusion"
+    checkpoint: "data/models/go2_vacuum_floor_best.pt"
+  mop_floor:
+    type: "diffusion"
+    checkpoint: "data/models/go2_mop_floor_best.pt"
+
+# ── task compatibility ────────────────────────────────────────────────────────
+# Floor-only tasks; manipulation tasks are excluded (no arms)
+compatible_tasks:
+  - "sweep_floor"
+  - "vacuum_floor"
+  - "mop_floor"
+  - "take_out_trash"
+
+# ── simulation ────────────────────────────────────────────────────────────────
+simulation:
+  mjcf_asset: "assets/go2/go2.xml"
+  physics_timestep_s: 0.002
+  control_timestep_s: 0.02
+  obs_dim: 48          # 12 pos + 12 vel + 3 accel + 3 gyro + 4 quat + 3 pos + 3 target + 8 coverage
+  act_dim: 12

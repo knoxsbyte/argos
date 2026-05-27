@@ -17,6 +17,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from argos.comm.messages import Action, RobotState
+from argos.comm.robot_model import G1_SPEC, RobotModel
 
 if TYPE_CHECKING:
     pass
@@ -62,6 +63,10 @@ class G1Config(BaseModel):
     ip: str = Field(description="IP address of the G1 robot.")
     name: str = Field(default="G1", description="Human-readable robot name.")
     dof: int = Field(default=29, description="Degrees of freedom.")
+    robot_model: str = Field(
+        default=RobotModel.G1.value,
+        description="Robot model identifier — always 'unitree_g1' for G1Config.",
+    )
     control_freq: int = Field(
         default=50,
         gt=0,
@@ -81,32 +86,15 @@ class G1Config(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Joint limits (mirrors messages.py for in-bridge validation)
+# Joint limits — loaded from the central G1_SPEC so there is one source of truth
 # ---------------------------------------------------------------------------
 
-_JOINT_LOW = [
-    -2.87, -3.40, -1.30, -1.25, -2.18, -2.00,
-    -2.87, -0.09, -1.30, -1.25, -2.18, -2.00,
-    -0.52, -0.52, -3.14,
-    -2.87, -1.57, -3.14, -1.57, -3.14, -1.57,
-    -2.87, -3.14, -3.14, -1.57, -3.14, -1.57,
-    -0.5,  -0.5,
-]
-_JOINT_HIGH = [
-    2.87,  0.09,  1.30,  2.16,  2.18,  2.00,
-    2.87,  3.40,  1.30,  2.16,  2.18,  2.00,
-    0.52,  0.52,  3.14,
-    2.87,  3.14,  3.14,  1.57,  3.14,  1.57,
-    2.87,  1.57,  3.14,  1.57,  3.14,  1.57,
-    0.5,   0.5,
-]
+_JOINT_LOW  = list(G1_SPEC.joint_limits_low)
+_JOINT_HIGH = list(G1_SPEC.joint_limits_high)
 
 
 def _clip_joints(targets: list[float]) -> list[float]:
-    return [
-        float(max(lo, min(hi, v)))
-        for v, lo, hi in zip(targets, _JOINT_LOW, _JOINT_HIGH)
-    ]
+    return G1_SPEC.clip_joints(targets)
 
 
 # ---------------------------------------------------------------------------
@@ -434,6 +422,7 @@ class MockUnitreeBridge:
             for i, (amp, freq) in enumerate(zip(self._amps, self._freqs))
         ]
         return RobotState(
+            robot_model=RobotModel.G1.value,
             battery_percent=self._battery,
             joint_positions=joint_pos,
             joint_velocities=joint_vel,
