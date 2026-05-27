@@ -582,6 +582,21 @@ class LoRAFinetuner:
             json.dump(state, f, indent=2)
 
         logger.info("Checkpoint saved: %s (val_loss=%.4f)", ckpt_dir, val_loss)
+
+        # Register in the checkpoint index so argos train checkpoints can find it.
+        try:
+            from argos.training.checkpoints import CheckpointRegistry
+            registry = CheckpointRegistry(self.output_dir)
+            registry.register(
+                path=ckpt_dir,
+                epoch=epoch,
+                task_type=getattr(self.config, "task_type", "unknown"),
+                model_type=self.config.policy_type,
+                metrics={"val_loss": val_loss},
+            )
+        except Exception as exc:
+            logger.debug("CheckpointRegistry registration skipped: %s", exc)
+
         return ckpt_dir
 
     @staticmethod

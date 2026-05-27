@@ -33,6 +33,7 @@ from argos.training.preprocess import ActionLabeler, PoseEstimator
 from argos.training.dataset import LeRobotDatasetBuilder
 from argos.training.finetune import FinetuneConfig, LoRAFinetuner
 from argos.training.evaluate import EvalConfig, EvalResult, PolicyEvaluator
+from argos.training.checkpoints import CheckpointRecord, CheckpointRegistry
 from argos.training.sim.mujoco_env import CleaningEnv
 
 __all__ = [
@@ -48,6 +49,9 @@ __all__ = [
     # Fine-tuning
     "LoRAFinetuner",
     "FinetuneConfig",
+    # Checkpoints
+    "CheckpointRegistry",
+    "CheckpointRecord",
     # Evaluation
     "PolicyEvaluator",
     "EvalConfig",

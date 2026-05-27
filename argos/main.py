@@ -690,6 +690,124 @@ train_app = typer.Typer(
 app.add_typer(train_app, name="train")
 
 
+@train_app.command("checkpoints")
+def train_checkpoints(
+    model_dir: Path = typer.Option(Path("data/models"), "--dir", "-d",
+                                   help="Directory containing checkpoints.json"),
+    task:      Optional[str] = typer.Option(None,  "--task",  "-t",
+                                            help="Filter by task type"),
+    best:      bool = typer.Option(False, "--best", "-b",
+                                   help="Show only the single best checkpoint"),
+    prune:     int  = typer.Option(0,    "--prune", "-p",
+                                   help="Keep top-N by success_rate, remove the rest (0=off)"),
+    compare:   Optional[str] = typer.Option(None, "--compare",
+                                            help="Comma-separated pair of IDs to compare (e.g. ID_A,ID_B)"),
+    metric:    str  = typer.Option("success_rate", "--metric", "-m",
+                                   help="Metric used for ranking/pruning"),
+) -> None:
+    """List, compare, and prune model checkpoints."""
+    from argos.training.checkpoints import CheckpointRegistry
+
+    registry = CheckpointRegistry(model_dir)
+
+    # ── compare mode ──────────────────────────────────────────────────────────
+    if compare:
+        parts = [p.strip() for p in compare.split(",")]
+        if len(parts) != 2:
+            console.print("  [bold #FF4444]--compare expects exactly two IDs separated by a comma.[/]")
+            raise typer.Exit(1)
+        try:
+            diff = registry.compare(parts[0], parts[1])
+        except KeyError as exc:
+            console.print(f"  [bold #FF4444]{exc}[/]")
+            raise typer.Exit(1)
+
+        t = Table(border_style="#C0C0C0", header_style="bold #00FFFF", show_lines=False)
+        t.add_column("Metric", style="#C0C0C0")
+        t.add_column(parts[0][:20], style="#00FFFF", no_wrap=True)
+        t.add_column(parts[1][:20], style="#00FFFF", no_wrap=True)
+        t.add_column("Δ",           no_wrap=True)
+        for k, v in diff.items():
+            va = f"{v['a']:.4f}" if v["a"] is not None else "—"
+            vb = f"{v['b']:.4f}" if v["b"] is not None else "—"
+            if v["delta"] is not None:
+                sign  = "+" if v["delta"] >= 0 else ""
+                color = "#00FF88" if v["delta"] >= 0 else "#FF4444"
+                delta_str = f"[{color}]{sign}{v['delta']:.4f}[/]"
+            else:
+                delta_str = "[#808080]—[/]"
+            t.add_row(k, va, vb, delta_str)
+        console.print()
+        console.print(Panel(t, title="[bold #00FFFF]Checkpoint Comparison[/]",
+                            border_style="#C0C0C0"))
+        console.print()
+        return
+
+    # ── prune mode ────────────────────────────────────────────────────────────
+    if prune > 0:
+        removed = registry.prune(keep_top=prune, metric_key=metric)
+        if removed:
+            console.print(f"\n  [bold #FFD700]⊘[/]  Pruned {len(removed)} checkpoint(s):")
+            for cid in removed:
+                console.print(f"      [#808080]{cid}[/#808080]")
+        else:
+            console.print(f"\n  [#808080]Nothing pruned — fewer than {prune} "
+                          f"checkpoints with '{metric}'.[/#808080]")
+        console.print()
+        return
+
+    # ── best mode ─────────────────────────────────────────────────────────────
+    if best:
+        rec = registry.best(task_type=task, metric_key=metric)
+        if rec is None:
+            console.print(f"\n  [#808080]No checkpoints found.[/#808080]\n")
+            return
+        console.print(Panel(
+            f"  [#808080]ID:[/#808080]      [bold #00FFFF]{rec.checkpoint_id}[/]\n"
+            f"  [#808080]Path:[/#808080]    [white]{rec.path}[/white]\n"
+            f"  [#808080]Model:[/#808080]   {rec.model_type}  epoch {rec.epoch}\n"
+            f"  [#808080]Task:[/#808080]    {rec.task_type}\n"
+            f"  [#808080]Created:[/#808080] {rec.created_iso()}\n"
+            f"  [#808080]Metrics:[/#808080] "
+            + "  ".join(f"{k}={v:.4f}" for k, v in rec.metrics.items()),
+            title="[bold #00FFFF]Best Checkpoint[/]", border_style="#C0C0C0"))
+        console.print()
+        return
+
+    # ── list mode (default) ───────────────────────────────────────────────────
+    records = registry.list_all(task_type=task)
+    if not records:
+        console.print(f"\n  [#808080]No checkpoints in {model_dir}.[/#808080]  "
+                      f"Run [bold #00FFFF]argos train finetune[/] first.\n")
+        return
+
+    t = Table(border_style="#C0C0C0", header_style="bold #00FFFF",
+              show_lines=False, min_width=80)
+    t.add_column("ID",      style="#C0C0C0", no_wrap=True)
+    t.add_column("Model",   style="#00FFFF", no_wrap=True)
+    t.add_column("Task",    style="white",   no_wrap=True)
+    t.add_column("Epoch",   style="#808080", no_wrap=True, width=6)
+    t.add_column("Metrics", style="#C0C0C0")
+    t.add_column("Created", style="#808080", no_wrap=True)
+    t.add_column("Best",    no_wrap=True,    width=5)
+
+    for r in records:
+        metric_str = "  ".join(f"{k}={v:.3f}" for k, v in r.metrics.items()) or "—"
+        best_flag  = "[bold #00FF88]★[/]" if r.is_best else ""
+        t.add_row(r.checkpoint_id, r.model_type, r.task_type,
+                  str(r.epoch), metric_str, r.created_iso(), best_flag)
+
+    console.print()
+    console.print(Panel(t, title=f"[bold #00FFFF]Checkpoints[/]  "
+                        f"[#808080]{len(records)} record(s)[/#808080]",
+                        border_style="#C0C0C0"))
+    console.print(
+        f"  [#808080]Tip: [bold #00FFFF]--best[/] · "
+        f"[bold #00FFFF]--prune N[/] · "
+        f"[bold #00FFFF]--compare ID_A,ID_B[/][/#808080]\n"
+    )
+
+
 @train_app.command("ingest")
 def train_ingest(
     video_dir: Path = typer.Argument(..., help="Directory containing training videos"),
